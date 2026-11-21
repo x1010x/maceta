@@ -3,6 +3,17 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.45
+
+- **Arreglado: elegir carpeta mientras otra se está escaneando duplicaba
+  filas.** Cada escaneo lleva número; si empiezas otro, el anterior
+  descarta sus lotes en vez de seguir insertando en la misma tabla. En
+  el log del usuario llegaron a solaparse **tres escaneos de 11.099
+  ficheros** peleándose por el disco: 175 s, 113 s y 98 s a la vez.
+- El índice se guarda también al terminar un escaneo, no solo tras
+  analizar: así el arranque siguiente ya es instantáneo aunque no hayas
+  analizado nada.
+
 ## 0.4.44
 
 - **Arrancar ya no cuesta un minuto.** La carpeta siempre se guardaba y

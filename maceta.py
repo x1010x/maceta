@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.44"
+VERSION = "0.4.45"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2296,6 +2296,7 @@ class MacetaApp(tk.Tk):
         self._search_num: dict[str, int] = {}  # sid -> #N
         self._dl_num: dict[tuple, int] = {}    # (user, filename_lc) -> #N
         self._search_link_iid: dict[str, str] = {}  # sid -> orig iid
+        self._scan_gen = 0
         self._results_current_sid = None
         self._fetching_sid = None
         self._player_proc = None
@@ -4704,8 +4705,11 @@ class MacetaApp(tk.Tk):
                 return cand
         return str(Path.home())
 
-    def _scan_folder(self, folder):
+    def _scan_folder(self, folder, gen=None):
         t0 = time.time()
+        if gen is None:
+            self._scan_gen = getattr(self, "_scan_gen", 0) + 1
+            gen = self._scan_gen
         log.info("scan_folder start: %s", folder)
         files = [
             p for p in sorted(Path(folder).rglob("*"))
@@ -4728,14 +4732,23 @@ class MacetaApp(tk.Tk):
             if use_index and hydrate_from_index(row):
                 cached += 1
             batch.append(row)
+            if gen != getattr(self, "_scan_gen", gen):
+                log.info("scan_folder %s cancelado: hay otro más reciente",
+                         folder)
+                return
             if len(batch) >= BATCH or i == total:
-                self.after(0, self._insert_rows_batch, list(batch), i, total)
+                self.after(0, self._insert_rows_batch, list(batch), i, total,
+                           gen)
                 batch.clear()
         log.info("scan_folder done: %d files in %.2fs (%d desde el índice)",
                  total, time.time() - t0, cached)
-        self.after(0, self._scan_done, total, cached)
+        save_index()
+        if gen == getattr(self, "_scan_gen", gen):
+            self.after(0, self._scan_done, total, cached)
 
-    def _insert_rows_batch(self, rows, done, total):
+    def _insert_rows_batch(self, rows, done, total, gen=None):
+        if gen is not None and gen != getattr(self, "_scan_gen", gen):
+            return
         for row in rows:
             tag = row["verdict"] if row["verdict"] else "PENDING"
             iid = self.tree.insert(
@@ -6595,16 +6608,22 @@ class MacetaApp(tk.Tk):
         self._rebuild_recent_menu()
 
     def open_folder(self, d):
-        """Escanea una carpeta y la apunta en las recientes."""
+        """Escanea una carpeta y la apunta en las recientes.
+
+        Cada escaneo lleva número: si eliges otra carpeta mientras uno
+        está en marcha, el viejo sigue vivo en su hilo pero sus lotes se
+        descartan. Sin esto, dos escaneos insertaban en la misma tabla y
+        salían filas duplicadas."""
         self.folder_filter = ""
         self.folder.set(d)
         self._push_recent_folder(d)
         self._save_current_state()
+        self._scan_gen = getattr(self, "_scan_gen", 0) + 1
         self.tree.delete(*self.tree.get_children())
         self.rows_by_iid.clear()
         self.progress.set(0)
         self.status.set(f"Leyendo metadatos de {d}…")
-        threading.Thread(target=self._scan_folder, args=(d,),
+        threading.Thread(target=self._scan_folder, args=(d, self._scan_gen),
                          daemon=True).start()
 
     # ---------- Anchos de columna persistentes ----------
