@@ -89,7 +89,21 @@ Elige tu sistema:
 <details>
 <summary><b>🍎 macOS</b> (Intel y Apple Silicon)</summary>
 
-La vía más cómoda es **Miniforge**, que trae Python con Tkinter ya dentro y
+**En un comando**, si no quieres saber nada de entornos ni dependencias:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/x1010x/maceta/main/install-mac.sh | bash
+```
+
+Instala Miniforge si no lo tienes, crea el entorno con todo, clona el
+repo en `~/maceta` y te deja un **Maceta.app** en `~/Applications` con el
+logo de icono. Para actualizar, vuelve a lanzarlo. Si ya tienes un Python
+con las dependencias, pásaselo y se salta conda:
+`MACETA_PYTHON=/ruta/a/python bash install-mac.sh`.
+
+<br>
+
+O **a mano**. La vía más cómoda es **Miniforge**, que trae Python con Tkinter ya dentro y
 te instala `librosa` sin pelearte con la compilación:
 
 1. Descarga el instalador de
@@ -395,6 +409,7 @@ WAVs sintéticos.
 ```
 maceta/
 ├── maceta.py           # todo el código
+├── install-mac.sh      # instalador de una línea
 ├── logo.png
 ├── requirements.txt
 ├── tests/
