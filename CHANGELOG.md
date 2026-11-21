@@ -3,6 +3,20 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.43
+
+- **Arreglado "Encontrar en Biblioteca"**: saltaba a la pestaña pero la
+  canción se quedaba sin marcar. Dos causas: el árbol de carpetas seguía
+  marcando la subcarpeta anterior (y el siguiente evento volvía a
+  filtrar, escondiendo la fila), y con un análisis en marcha los
+  refrescos del filtro se llevaban la vista. Ahora el explorador vuelve
+  a la raíz, la fila se reengancha si estaba oculta y la selección se
+  reafirma un instante después. El estado dice además **en qué carpeta
+  está**: *"📍 Guns N' Roses - Don't Cry.mp3 · en 📂 ROCK"*.
+- Si la canción **no está en la biblioteca cargada** pero Maceta sabe de
+  dónde salió (porque guardó el enlace al descargarla), te ofrece abrir
+  esa carpeta y la busca sola al terminar de cargarla.
+
 ## 0.4.42
 
 - **"🔍 Encontrar en Biblioteca"** por botón derecho en Actividad

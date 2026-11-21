@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.42"
+VERSION = "0.4.43"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2763,6 +2763,25 @@ class MacetaApp(tk.Tk):
             if mejor_sim >= 0.6:
                 iid = mejor
         if not iid:
+            # Caso típico: la canción existe pero la biblioteca cargada
+            # apunta a otra carpeta. Si el link sabe dónde está, se
+            # ofrece abrirla en vez de dejar al usuario tirado.
+            destino = ""
+            if nombre:
+                link = get_download_link(Path(nombre).name)
+                destino = (link.get("original_folder")
+                           or str(Path(link["original_path"]).parent)
+                           if link.get("original_path") else "")
+            if destino and os.path.isdir(destino):
+                if messagebox.askyesno(
+                    "Maceta",
+                    f"«{Path(nombre).stem[:48]}» no está en la biblioteca "
+                    f"cargada, pero sé de dónde salió:\n\n{destino}\n\n"
+                    "¿Abro esa carpeta?",
+                ):
+                    self.open_folder(destino)
+                    self.after(1200, lambda: self.find_in_library(nombre))
+                return
             messagebox.showinfo(
                 "Maceta",
                 f"No encuentro «{Path(nombre or '').stem[:50]}» en la "
@@ -2774,17 +2793,43 @@ class MacetaApp(tk.Tk):
     def _focus_library_row(self, iid):
         """Quita filtros, salta a Biblioteca y deja la fila marcada."""
         self.folder_filter = ""
+        # El árbol tiene que acompañar: si se queda marcando una
+        # subcarpeta mientras la lista enseña todo, el siguiente evento
+        # del árbol vuelve a filtrar y se pierde la selección.
+        try:
+            raices = self.folder_tree.get_children("")
+            if raices:
+                self.folder_tree.selection_set(raices[0])
+                self.folder_tree.see(raices[0])
+        except Exception:
+            pass
+        self.folder_filter = ""
         self.active_bucket.set("todas")
         self.filter_var.set("")
         self.filter_pending_sub_var.set(False)
         self._apply_filter()
         self.notebook.select(0)
-        if self.tree.exists(iid):
+        self._pin_row(iid)
+        # Un análisis en marcha repinta el filtro cada pocos ms y puede
+        # llevarse la vista; se reafirma la selección un instante después.
+        self.after(180, self._pin_row, iid)
+        self.after(600, self._pin_row, iid)
+
+    def _pin_row(self, iid):
+        if iid not in self.rows_by_iid or not self.tree.exists(iid):
+            return
+        try:
+            if iid in getattr(self, "_hidden_iids", set()):
+                self.tree.reattach(iid, "", tk.END)
+                self._hidden_iids.discard(iid)
             self.tree.selection_set(iid)
             self.tree.focus(iid)
             self.tree.see(iid)
-            row = self.rows_by_iid.get(iid) or {}
-            self.status.set(f"📍 {row.get('name', '')}")
+        except Exception:
+            return
+        row = self.rows_by_iid.get(iid) or {}
+        carpeta = Path(row.get("path", "")).parent.name
+        self.status.set(f"📍 {row.get('name', '')}  ·  en 📂 {carpeta}")
 
     def _find_from_downloads(self):
         sel = self.dl_tree.selection()
