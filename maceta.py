@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.43"
+VERSION = "0.4.44"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -197,27 +197,32 @@ def judge(bitrate_kbps, cutoff_hz, codec):
     return "FAKE", f"Corte {int(cutoff_hz)} Hz — calidad real{hint}{declared}"
 
 
-def scan_row(path: str) -> dict:
-    """Fila con solo metadatos, sin decodificar el audio."""
-    meta = get_metadata(path)
-    return {
-        "path": str(path),
-        "name": Path(path).name,
-        "codec": meta["codec"],
-        "bitrate_kbps": meta["bitrate_kbps"],
-        "sample_rate": meta["sample_rate"],
-        "duration_s": meta["duration_s"],
-        "channels": meta["channels"],
-        "bpm": None,
-        "cutoff_hz": None,
-        "verdict": "",
-        "detail": "",
-        "freqs": None,
-        "psd_db": None,
-        "sr_used": None,
-        "analyzed": False,
-        "slsk_status": "",
+META_FIELDS = ("codec", "bitrate_kbps", "sample_rate", "duration_s",
+               "channels")
+
+
+def scan_row(path: str, use_index: bool = True) -> dict:
+    """Fila con solo metadatos, sin decodificar el audio.
+
+    Leer los tags con mutagen cuesta ~5 ms por fichero: con 11.000
+    canciones es un minuto de espera en cada arranque. Si el índice ya
+    tiene los metadatos de esta canción (y el fichero no ha cambiado) se
+    reutilizan — identificarla por hash cuesta 1 ms."""
+    base = {
+        "path": str(path), "name": Path(path).name,
+        "bpm": None, "cutoff_hz": None, "verdict": "", "detail": "",
+        "freqs": None, "psd_db": None, "sr_used": None,
+        "analyzed": False, "slsk_status": "",
     }
+    if use_index:
+        meta = index_meta(path)
+        if meta:
+            base.update({k: meta.get(k) for k in META_FIELDS})
+            return base
+    meta = get_metadata(path)
+    base.update({k: meta[k] for k in META_FIELDS})
+    index_put_meta(path, base)
+    return base
 
 
 def analyze_row(row: dict, max_seconds: float = None) -> dict:
@@ -651,6 +656,45 @@ _index_lock = threading.Lock()
 _index_dirty = False
 
 
+PATHS_KEY = "__paths__"       # {ruta: hash} para no rehashear lo conocido
+
+
+def _paths_map() -> dict:
+    idx = load_index()
+    m = idx.get(PATHS_KEY)
+    if not isinstance(m, dict):
+        m = {}
+        idx[PATHS_KEY] = m
+    return m
+
+
+def index_entry(path: str, want_hash: bool = True) -> tuple:
+    """(hash, entrada) de esta canción.
+
+    Primero por ruta: si la ruta es conocida y el fichero no ha cambiado
+    de tamaño ni fecha, nos ahorramos leer 256 KB para hashear — con
+    11.000 canciones eso es la diferencia entre 16 s y 2 s de arranque.
+    Si la ruta no está (fichero movido o nuevo) se recurre al hash, que
+    es lo que permite reconocerla aunque la hayan cambiado de sitio."""
+    idx = load_index()
+    size, mtime = _file_fingerprint(path)
+    digest = _paths_map().get(str(path))
+    if digest:
+        e = idx.get(digest)
+        if e and e.get("size") == size and e.get("mtime") == mtime:
+            return digest, e
+    if not want_hash:
+        return "", {}
+    digest = audio_hash(path)
+    if not digest:
+        return "", {}
+    e = idx.get(digest)
+    if e and e.get("size") == size and e.get("mtime") == mtime:
+        _paths_map()[str(path)] = digest
+        return digest, e
+    return digest, {}
+
+
 def load_index() -> dict:
     """Índice de análisis ya hechos: {ruta: medidas}. Se lee una vez."""
     global _index_cache
@@ -701,8 +745,7 @@ def index_get(path: str) -> dict:
     (indexadas por ruta) se migran al vuelo la primera vez que se tocan,
     para no perder lo ya analizado al actualizar."""
     idx = load_index()
-    digest = audio_hash(path)
-    e = idx.get(digest) if digest else None
+    digest, e = index_entry(path)
     if e:
         return e if _params_ok(e) else {}
 
@@ -732,18 +775,53 @@ def index_put(row: dict) -> None:
     if not path or row.get("verdict") == "ERROR":
         return
     size, mtime = _file_fingerprint(path)
-    digest = audio_hash(path)
+    digest, _e = index_entry(path)
     if not digest:
         return
     with _index_lock:
+        _paths_map()[str(path)] = digest
         idx = load_index()
         idx.pop(str(path), None)        # por si venía de la época de rutas
-        idx[digest] = {
+        e = idx.get(digest) or {}
+        # Se conserva `meta`: los metadatos y el análisis viven en la
+        # misma entrada y guardar uno no debe tirar el otro.
+        e.update({
             "size": size, "mtime": mtime, "path": str(path),
             "bpm": row.get("bpm"), "cutoff_hz": row.get("cutoff_hz"),
             "cut_db": CUTOFF_THRESHOLD_DB, "secs": ANALYSIS_MAX_SECONDS,
             "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        }
+        })
+        if not e.get("meta"):
+            e["meta"] = {k: row.get(k) for k in META_FIELDS}
+        idx[digest] = e
+        _index_dirty = True
+
+
+def index_meta(path: str) -> dict:
+    """Metadatos guardados de esta canción, o {} si no valen.
+
+    No mira los parámetros de análisis: el codec y la duración no
+    dependen de con qué umbrales se analizó."""
+    _digest, e = index_entry(path)
+    meta = (e or {}).get("meta") or {}
+    return meta if meta.get("codec") else {}
+
+
+def index_put_meta(path: str, row: dict) -> None:
+    """Guarda los metadatos (no el análisis) de una canción recién leída."""
+    global _index_dirty
+    digest, e = index_entry(path)
+    if not digest:
+        return
+    size, mtime = _file_fingerprint(path)
+    with _index_lock:
+        idx = load_index()
+        if not e:
+            e = {"size": size, "mtime": mtime}
+            idx[digest] = e
+        e["meta"] = {k: row.get(k) for k in META_FIELDS}
+        e["path"] = str(path)
+        _paths_map()[str(path)] = digest
         _index_dirty = True
 
 
@@ -836,8 +914,8 @@ def remove_download_link(local_filename: str) -> None:
 def index_stats() -> tuple:
     """(entradas, cuántas siguen siendo del formato viejo por ruta)."""
     idx = load_index()
-    viejas = sum(1 for k in idx if os.sep in k)
-    return len(idx), viejas
+    viejas = sum(1 for k in idx if k != PATHS_KEY and os.sep in k)
+    return len(idx) - (1 if PATHS_KEY in idx else 0), viejas
 
 
 def prune_download_links() -> None:

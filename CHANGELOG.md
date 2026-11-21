@@ -3,6 +3,20 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.44
+
+- **Arrancar ya no cuesta un minuto.** La carpeta siempre se guardaba y
+  se volvía a abrir sola, pero releer los tags de 11.000 canciones son
+  ~67 segundos en los que la lista parece vacía. Ahora el índice guarda
+  también los metadatos (formato, bitrate, SR, duración) y un mapa
+  ruta→huella, así que las canciones conocidas se listan **sin tocar el
+  disco más que para un `stat`**.
+  Medido en una biblioteca real de 4.559 canciones: de 6,0 ms por
+  fichero a 0,04 ms — de ~27 s a menos de medio segundo. La primera vez
+  tras actualizar sí lee los tags, para llenar el índice.
+- Si mueves una canción de carpeta, se la sigue reconociendo por su
+  huella; el mapa de rutas solo es un atajo para lo que no se ha movido.
+
 ## 0.4.43
 
 - **Arreglado "Encontrar en Biblioteca"**: saltaba a la pestaña pero la
