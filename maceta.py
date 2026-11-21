@@ -47,7 +47,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.39"
+VERSION = "0.4.40"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -361,6 +361,7 @@ USER_STATE_DEFAULTS = {
     "ban_window_min":             60,     # ventana en minutos
     "smart_search":               True,   # reintenta con menos palabras
     "show_all_downloads":         False,  # incluir búsquedas sin descarga
+    "font_sizes":                 {},     # {tabla: tamaño de letra}
     # --- Umbrales que antes vivían cableados en el código ---
     "target_bitrate":             320,     # GOOD_MP3_MIN_BR
     "opportunistic_floor":        192,     # OPPORTUNISTIC_FLOOR
@@ -2096,6 +2097,8 @@ class MacetaApp(tk.Tk):
         self.ban_window_min_var = tk.IntVar(value=us["ban_window_min"])
         self.smart_search_var = tk.BooleanVar(value=us["smart_search"])
         self.show_all_dl_var = tk.BooleanVar(value=us["show_all_downloads"])
+        self.font_sizes = dict(us.get("font_sizes") or {})
+        self._font_keys = {}
         # Descargas que hemos cancelado nosotros: no cuentan como falta
         # del peer. Clave (usuario, fichero_lower), igual que el resto.
         self._self_cancelled: set = set()
@@ -2134,6 +2137,7 @@ class MacetaApp(tk.Tk):
         self._col_save_job = None
         self._restore_column_widths()
         self._layout_job = None
+        self._restore_font_sizes()
         self.after(300, self._restore_layout)
         self.after(600, self._show_whats_new_if_updated)
         self.after(900, self._restore_last_folder)
@@ -2939,15 +2943,8 @@ class MacetaApp(tk.Tk):
         return floor
 
     def _build_biblio_tab(self, parent):
-        top = ttk.Frame(parent, padding=8)
-        top.pack(fill=tk.X)
-        ttk.Button(top, text="Seleccionar carpeta…", command=self.on_pick).pack(side=tk.LEFT)
-        ttk.Entry(top, textvariable=self.folder, state="readonly").pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=8
-        )
-
-        # Explorador a la izquierda, biblioteca a la derecha. Apuntas a la
-        # raíz de tu música y trabajas subcarpeta por subcarpeta.
+        # El selector de carpeta vive en el panel izquierdo, no en una
+        # barra a lo ancho: así la tabla gana una fila entera de alto.
         self._biblio_panes = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
         self._biblio_panes.pack(fill=tk.BOTH, expand=True)
         left = ttk.Frame(self._biblio_panes)
@@ -2992,9 +2989,10 @@ class MacetaApp(tk.Tk):
             variable=self.filter_pending_sub_var,
             command=self._apply_filter,
         ).pack(side=tk.LEFT, padx=8)
+        self._font_controls(filt, lambda: self.tree, "biblio")
         self.pref_indicator_var = tk.StringVar(value="")
         ttk.Label(filt, textvariable=self.pref_indicator_var,
-                  foreground="#888").pack(side=tk.RIGHT)
+                  foreground="#888").pack(side=tk.RIGHT, padx=8)
 
         cols = ("codec", "bitrate", "sr", "dur", "bpm", "cutoff",
                 "verdict", "detail", "slsk")
@@ -3085,6 +3083,7 @@ class MacetaApp(tk.Tk):
         top.pack(fill=tk.X)
         ttk.Button(top, text="📊 Calcular estadísticas",
                    command=self.on_compute_stats).pack(side=tk.LEFT)
+        self._font_controls(top, lambda: self.stats_tree, "stats")
         self.stats_scope_var = tk.StringVar(value="todo")
         ttk.Radiobutton(top, text="Toda la biblioteca", value="todo",
                         variable=self.stats_scope_var).pack(side=tk.LEFT,
@@ -3160,11 +3159,80 @@ class MacetaApp(tk.Tk):
             f"«{ambito}» · calculado en {elapsed:.1f} s · "
             + time.strftime("%H:%M:%S"))
 
+    # ---------- Tamaño de letra por tabla ----------
+
+    FONT_MIN, FONT_MAX = 8, 22
+
+    def _font_controls(self, parent, tree_getter, key):
+        """Dos iconitos A− / A+ que cambian la letra solo de esa tabla."""
+        box = ttk.Frame(parent)
+        box.pack(side=tk.RIGHT)
+        ttk.Button(box, text="A−", width=3,
+                   command=lambda: self._bump_font(tree_getter, key, -1)
+                   ).pack(side=tk.LEFT)
+        ttk.Button(box, text="A+", width=3,
+                   command=lambda: self._bump_font(tree_getter, key, +1)
+                   ).pack(side=tk.LEFT, padx=(2, 0))
+        self._font_keys[key] = tree_getter
+        return box
+
+    def _base_font_size(self) -> int:
+        from tkinter import font as tkfont
+        try:
+            return int(tkfont.nametofont("TkDefaultFont").cget("size")) or 12
+        except Exception:
+            return 12
+
+    def _apply_font_size(self, tree, key, size):
+        from tkinter import font as tkfont
+        try:
+            fam = tkfont.nametofont("TkDefaultFont").cget("family")
+        except Exception:
+            fam = "TkDefaultFont"
+        style_name = f"F{key}.Treeview"
+        st = ttk.Style(self)
+        st.configure(style_name, font=(fam, size),
+                     rowheight=int(size * 2.0) + 2)
+        st.configure(f"{style_name}.Heading", font=(fam, max(8, size - 1)))
+        try:
+            tree.configure(style=style_name)
+        except Exception:
+            pass
+
+    def _bump_font(self, tree_getter, key, delta):
+        tree = tree_getter() if callable(tree_getter) else tree_getter
+        if tree is None:
+            return
+        size = self.font_sizes.get(key, self._base_font_size()) + delta
+        size = max(self.FONT_MIN, min(self.FONT_MAX, size))
+        self.font_sizes[key] = size
+        self._apply_font_size(tree, key, size)
+        save_user_state({"font_sizes": self.font_sizes})
+
+    def _restore_font_sizes(self):
+        for key, getter in self._font_keys.items():
+            size = self.font_sizes.get(key)
+            if not size:
+                continue
+            tree = getter() if callable(getter) else getter
+            if tree is not None:
+                self._apply_font_size(tree, key, size)
+
     # ---------- Explorador de carpetas ----------
 
     def _build_folder_explorer(self, parent):
-        ttk.Label(parent, text="Carpetas", padding=(8, 6, 8, 2)).pack(
-            anchor="w")
+        sel = ttk.Frame(parent, padding=(8, 8, 4, 2))
+        sel.pack(fill=tk.X)
+        ttk.Button(sel, text="📂 Seleccionar carpeta…",
+                   command=self.on_pick).pack(fill=tk.X)
+        ttk.Label(parent, textvariable=self.folder, foreground="#888",
+                  wraplength=230, justify="left",
+                  padding=(8, 0, 4, 4)).pack(fill=tk.X)
+
+        head = ttk.Frame(parent, padding=(8, 0, 4, 2))
+        head.pack(fill=tk.X)
+        ttk.Label(head, text="Carpetas").pack(side=tk.LEFT)
+        self._font_controls(head, lambda: self.folder_tree, "folders")
         cols = ("n", "fake", "pend")
         wrap, self.folder_tree = make_scrollable_tree(
             parent, columns=cols, show="tree headings", selectmode="browse")
@@ -3402,6 +3470,9 @@ class MacetaApp(tk.Tk):
         # --- Búsquedas (izquierda) ---
         s_frame = ttk.LabelFrame(top_paned, text="Búsquedas", padding=6)
         top_paned.add(s_frame, weight=1)
+        s_head = ttk.Frame(s_frame)
+        s_head.pack(fill=tk.X)
+        self._font_controls(s_head, lambda: self.search_tree, "searches")
         s_cols = ("num", "query", "state", "responses", "files")
         s_wrap, self.search_tree = make_scrollable_tree(
             s_frame, columns=s_cols, show="headings",
@@ -3445,6 +3516,9 @@ class MacetaApp(tk.Tk):
         # --- Resultados (derecha) ---
         r_frame = ttk.LabelFrame(top_paned, text="Resultados", padding=6)
         top_paned.add(r_frame, weight=2)
+        r_head = ttk.Frame(r_frame)
+        r_head.pack(fill=tk.X)
+        self._font_controls(r_head, lambda: self.results_tree, "results")
         # Orden: # · Nombre · Cola · Slot · MB · (resto)
         r_cols = ("num", "name", "queue", "slot", "size",
                   "ext", "br", "user", "folder", "speed")
@@ -3495,6 +3569,9 @@ class MacetaApp(tk.Tk):
         # --- Descargas (abajo, ocupa el segundo pane vertical) ---
         d_frame = ttk.LabelFrame(main, text="Descargas", padding=6)
         main.add(d_frame, weight=1)
+        d_head = ttk.Frame(d_frame)
+        d_head.pack(fill=tk.X)
+        self._font_controls(d_head, lambda: self.dl_tree, "activity_dl")
         d_cols = ("num", "file", "user", "state", "queue",
                   "progress", "size")
         d_wrap, self.dl_tree = make_scrollable_tree(
@@ -3546,7 +3623,9 @@ class MacetaApp(tk.Tk):
         ttk.Label(top, text=f"📂 {DOWNLOADS_DIR}",
                   foreground="#555").pack(side=tk.LEFT)
         ttk.Button(top, text="↻ Refrescar",
-                   command=self._refresh_downloads_tab).pack(side=tk.RIGHT)
+                   command=self._refresh_downloads_tab).pack(side=tk.RIGHT,
+                                                             padx=6)
+        self._font_controls(top, lambda: self.dl_files_tree, "downloads")
 
         cols = ("ext", "size", "duration", "bitrate")
         wrap, self.dl_files_tree = make_scrollable_tree(

@@ -3,6 +3,16 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.40
+
+- **Fuera la barra de arriba**: el botón de seleccionar carpeta y la
+  ruta se han movido al panel izquierdo, encima del explorador. La
+  tabla gana una fila entera de alto.
+- **Tamaño de letra por tabla**: dos iconitos `A−` / `A+` encima de cada
+  tabla — Biblioteca, explorador, Búsquedas, Resultados, Descargas de
+  Actividad, pestaña Descargas y Estadísticas. Cada una recuerda el
+  suyo, y el alto de fila se ajusta solo.
+
 ## 0.4.39
 
 - **Explorador de carpetas en Biblioteca.** Apuntas a la raíz de tu
