@@ -3,6 +3,13 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.38
+
+- **Las búsquedas ya descargadas se ven en verde.** La tabla de
+  Búsquedas queda así de un vistazo: verde = ya bajada, rojo = nadie
+  respondió, ámbar = respondieron pero no pasan tus filtros. El verde
+  aguanta aunque limpies la lista de descargas de slskd.
+
 ## 0.4.37
 
 - **Usuarios que cancelan, fuera.** Si un peer nos tumba 3 descargas en

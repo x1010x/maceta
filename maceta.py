@@ -47,7 +47,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.37"
+VERSION = "0.4.38"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2886,7 +2886,11 @@ class MacetaApp(tk.Tk):
         # dejan fuera todo lo que ofrecen.
         self.search_tree.tag_configure("nores", foreground="#d04a3f")
         self.search_tree.tag_configure("filtered", foreground="#c9890a")
+        self.search_tree.tag_configure("done", foreground="#1a7f37")
         self._search_usable = {}
+        # #N que ya han terminado de bajar. Se acumula y no se vacía:
+        # limpiar la lista de descargas de slskd no debe perder el verde.
+        self._completed_nums: set = set()
         for c, (t, w) in [
                 ("num",       ("#",        40)),
                 ("query",     ("Query",    280)),
@@ -4010,6 +4014,16 @@ class MacetaApp(tk.Tk):
         self.after(4000, self._activity_tick)
 
     def _activity_render(self, searches, downloads):
+        for ug in downloads:
+            user = ug.get("username", "")
+            for d in (ug.get("directories") or []):
+                for f in (d.get("files") or []):
+                    if "Succeeded" not in str(f.get("state", "")):
+                        continue
+                    n = self._dl_num.get(
+                        (user, (f.get("filename") or "").lower()))
+                    if n:
+                        self._completed_nums.add(n)
         current_sids = set()
         for s in searches:
             sid = s.get("id")
@@ -4028,7 +4042,9 @@ class MacetaApp(tk.Tk):
             rc = s.get("responseCount") or 0
             usable = self._search_usable.get(sid)
             tag2 = ""
-            if "Completed" in state_s and rc == 0:
+            if n and n in self._completed_nums:
+                tag2 = "done"          # ya bajada: manda sobre lo demás
+            elif "Completed" in state_s and rc == 0:
                 tag2 = "nores"
             elif usable == 0 and (s.get("fileCount") or 0):
                 tag2 = "filtered"
