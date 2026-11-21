@@ -3,6 +3,29 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.35
+
+- **Índice de análisis: no se escanea dos veces lo mismo.** Maceta guarda
+  el BPM y el corte espectral de cada fichero en `~/.maceta_index.json`.
+  Al abrir una carpeta ya analizada, las canciones aparecen con su
+  veredicto **al instante**, sin decodificar nada. "Analizar todas" se
+  salta lo que ya está hecho y te lo dice en la barra de estado.
+- **Botón 🔄 Re-analizar** para forzar: ignora el índice y vuelve a medir.
+  Actúa sobre la selección, o sobre toda la lista si no hay nada
+  seleccionado (preguntando antes). También en el menú Análisis y en el
+  menú contextual.
+- El índice se invalida solo si el fichero cambia de tamaño o fecha, o si
+  cambias la sensibilidad del detector. **El veredicto no se guarda: se
+  recalcula**, así que cambiar el corte de FAKE en Opciones reclasifica
+  toda la biblioteca al momento, sin volver a analizar.
+- **Los resultados que no pasan el filtro ya no desaparecen.** Antes, si
+  los 13 ficheros encontrados eran todos de bitrate bajo, el panel de
+  Resultados se quedaba vacío sin explicar nada. Ahora salen **en gris y
+  en cursiva con el motivo** al lado (`~133 kbps`, `formato ogg`), y si
+  quieres bajar uno igualmente puedes: te pide confirmación listando
+  cuáles no cumplen.
+- Dos opciones nuevas: *Recordar análisis ya hechos* y *Vaciar índice*.
+
 ## 0.4.34
 
 - **ARREGLADO: las búsquedas que no llegaban a 250 respuestas no bajaban

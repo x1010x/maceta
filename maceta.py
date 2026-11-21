@@ -47,7 +47,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.34"
+VERSION = "0.4.35"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -343,7 +343,7 @@ USER_STATE_DEFAULTS = {
     # --- Query y presentación de resultados ---
     "query_mode":                 "clean",  # raw | clean | tags
     "results_sort":               "score",  # score|br|size|speed|queue
-    "results_show_rejected":      False,
+    "results_show_rejected":      True,
     "results_limit":              300,
     # {clave_tabla: {columna: ancho}} — anchos que el usuario deja a mano
     "column_widths":              {},
@@ -353,6 +353,7 @@ USER_STATE_DEFAULTS = {
     "sash":                       {},      # {panel: [posiciones]}
     "recent_folders":             [],
     "restore_last_folder":        True,
+    "use_index":                  True,
     # --- Umbrales que antes vivían cableados en el código ---
     "target_bitrate":             320,     # GOOD_MP3_MIN_BR
     "opportunistic_floor":        192,     # OPPORTUNISTIC_FLOOR
@@ -593,6 +594,110 @@ def substitute_file(original_path: str, downloaded_path: str) -> Path:
 
 
 DOWNLOAD_LINKS_PATH = DOWNLOADS_DIR / ".maceta_links.json"
+
+
+INDEX_PATH = Path.home() / ".maceta_index.json"
+_index_cache = None
+_index_lock = threading.Lock()
+_index_dirty = False
+
+
+def load_index() -> dict:
+    """Índice de análisis ya hechos: {ruta: medidas}. Se lee una vez."""
+    global _index_cache
+    if _index_cache is None:
+        try:
+            _index_cache = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            _index_cache = {}
+    return _index_cache
+
+
+def save_index(force: bool = False) -> None:
+    """Vuelca el índice a disco. Con 4000 canciones esto es ~1 MB, así
+    que se escribe al terminar una tanda, no por cada fichero."""
+    global _index_dirty
+    with _index_lock:
+        if not _index_dirty and not force:
+            return
+        idx = _index_cache or {}
+        try:
+            tmp = INDEX_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(idx), encoding="utf-8")
+            tmp.replace(INDEX_PATH)
+            _index_dirty = False
+        except Exception as e:
+            log.warning("no se pudo guardar el índice: %s", e)
+
+
+def _file_fingerprint(path: str) -> tuple:
+    """Tamaño y mtime: si cambia cualquiera, el análisis guardado no vale."""
+    try:
+        st = os.stat(path)
+        return st.st_size, round(st.st_mtime, 3)
+    except OSError:
+        return (0, 0.0)
+
+
+def index_get(path: str) -> dict:
+    """Medidas guardadas para este fichero, o {} si no hay o están viejas.
+
+    Se invalida si el fichero cambió (tamaño/mtime) o si se analizó con
+    otros parámetros de los que hay puestos ahora."""
+    e = load_index().get(str(path))
+    if not e:
+        return {}
+    size, mtime = _file_fingerprint(path)
+    if e.get("size") != size or e.get("mtime") != mtime:
+        return {}
+    if (e.get("cut_db") != CUTOFF_THRESHOLD_DB
+            or e.get("secs") != ANALYSIS_MAX_SECONDS):
+        return {}
+    return e
+
+
+def index_put(row: dict) -> None:
+    """Guarda lo caro del análisis. El veredicto NO se guarda: se
+    recalcula con judge() al cargar, así cambiar los umbrales en
+    Opciones reclasifica la biblioteca sin volver a analizar nada."""
+    global _index_dirty
+    path = row.get("path")
+    if not path or row.get("verdict") == "ERROR":
+        return
+    size, mtime = _file_fingerprint(path)
+    with _index_lock:
+        load_index()[str(path)] = {
+            "size": size, "mtime": mtime,
+            "bpm": row.get("bpm"), "cutoff_hz": row.get("cutoff_hz"),
+            "cut_db": CUTOFF_THRESHOLD_DB, "secs": ANALYSIS_MAX_SECONDS,
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        _index_dirty = True
+
+
+def hydrate_from_index(row: dict) -> bool:
+    """Rellena la fila desde el índice. True si se ha podido."""
+    e = index_get(row.get("path", ""))
+    if not e:
+        return False
+    row["bpm"] = e.get("bpm")
+    row["cutoff_hz"] = e.get("cutoff_hz")
+    row["verdict"], row["detail"] = judge(
+        row.get("bitrate_kbps"), row.get("cutoff_hz"), row.get("codec"))
+    row["analyzed"] = True
+    row["from_index"] = True
+    return True
+
+
+def clear_index() -> int:
+    """Vacía el índice. Devuelve cuántas entradas había."""
+    global _index_cache, _index_dirty
+    n = len(load_index())
+    with _index_lock:
+        _index_cache = {}
+        _index_dirty = True
+    save_index(force=True)
+    return n
 
 
 def load_download_links() -> dict:
@@ -1672,6 +1777,7 @@ class MacetaApp(tk.Tk):
         self.auto_substitute_var = tk.BooleanVar(value=us["auto_substitute"])
         self.restore_last_folder_var = tk.BooleanVar(
             value=us["restore_last_folder"])
+        self.use_index_var = tk.BooleanVar(value=us["use_index"])
         apply_tunables(us)
         # iid → {"next_at": epoch_s, "attempts": int}
         self._retry_queue: dict = {}
@@ -1693,6 +1799,8 @@ class MacetaApp(tk.Tk):
         self._search_num: dict[str, int] = {}  # sid -> #N
         self._dl_num: dict[tuple, int] = {}    # (user, filename_lc) -> #N
         self._search_link_iid: dict[str, str] = {}  # sid -> orig iid
+        self._results_current_sid = None
+        self._fetching_sid = None
         self._player_proc = None
         self._player_path = None
         self.now_playing_var = tk.StringVar(value="—")
@@ -2023,6 +2131,8 @@ class MacetaApp(tk.Tk):
                           accelerator="⌘R", command=self.on_analyze_selected)
         m_ana.add_command(label="Analizar todas",
                           accelerator="⇧⌘R", command=self.on_analyze_all)
+        m_ana.add_command(label="🔄 Re-analizar (ignora el índice)",
+                          command=self.on_reanalyze)
         m_ana.add_separator()
         m_ana.add_command(label="Convertir a MP3 320",
                           command=self.on_convert_mp3)
@@ -2140,6 +2250,9 @@ class MacetaApp(tk.Tk):
                          if n_sel > 1 else "Analizar")
         m.add_command(label=analyze_label,
                       command=self.on_analyze_selected,
+                      state=("normal" if row else "disabled"))
+        m.add_command(label="🔄 Re-analizar (ignora el índice)",
+                      command=self.on_reanalyze,
                       state=("normal" if row else "disabled"))
         m.add_command(label="Bajar con Soulseek…",
                       command=self.on_slsk_search,
@@ -2436,6 +2549,7 @@ class MacetaApp(tk.Tk):
             "max_auto_requery":         int(self._num(self.max_auto_requery_var, 3)),
             "auto_substitute":          bool(self.auto_substitute_var.get()),
             "restore_last_folder":      bool(self.restore_last_folder_var.get()),
+            "use_index":                bool(self.use_index_var.get()),
         })
 
     @staticmethod
@@ -2581,6 +2695,8 @@ class MacetaApp(tk.Tk):
             side=tk.LEFT, fill=tk.Y, padx=8)
         ttk.Button(player, text="🔎 Analizar todas",
                    command=self.on_analyze_all).pack(side=tk.LEFT)
+        ttk.Button(player, text="🔄 Re-analizar",
+                   command=self.on_reanalyze).pack(side=tk.LEFT, padx=6)
         ttk.Button(player, text="⬇ Buscar fakes",
                    command=self.on_slsk_fakes).pack(side=tk.LEFT, padx=6)
         ttk.Separator(player, orient="vertical").pack(
@@ -2691,7 +2807,11 @@ class MacetaApp(tk.Tk):
             selectmode="extended", height=6,
         )
         r_wrap.pack(fill=tk.BOTH, expand=True)
-        self.results_tree.tag_configure("rejected", foreground="#999999")
+        # Descartados: grises y en cursiva, para que se lean como
+        # desactivados pero sigan siendo seleccionables a mano.
+        self.results_tree.tag_configure(
+            "rejected", foreground="#9a9a9a",
+            font=("TkDefaultFont", 11, "italic"))
         self._results_items = {}
         self._results_sort = {}
 
@@ -3371,14 +3491,19 @@ class MacetaApp(tk.Tk):
         # lotes para no ahogar la queue de after().
         BATCH = 50
         batch = []
+        cached = 0
+        use_index = self.use_index_var.get()
         for i, p in enumerate(files, 1):
-            batch.append(scan_row(str(p)))
+            row = scan_row(str(p))
+            if use_index and hydrate_from_index(row):
+                cached += 1
+            batch.append(row)
             if len(batch) >= BATCH or i == total:
                 self.after(0, self._insert_rows_batch, list(batch), i, total)
                 batch.clear()
-        log.info("scan_folder done: %d files in %.2fs",
-                 total, time.time() - t0)
-        self.after(0, self._scan_done, total)
+        log.info("scan_folder done: %d files in %.2fs (%d desde el índice)",
+                 total, time.time() - t0, cached)
+        self.after(0, self._scan_done, total, cached)
 
     def _insert_rows_batch(self, rows, done, total):
         for row in rows:
@@ -3393,10 +3518,10 @@ class MacetaApp(tk.Tk):
         # Sólo un refresh de filtro al final de cada batch
         self._schedule_filter_refresh()
 
-    def _scan_done(self, n):
+    def _scan_done(self, n, cached=0):
         self.progress.set(0)
         self.status.set(
-            f"{n} archivos listados — selecciona y pulsa Analizar "
+            f"{n} archivos listados" + (f" · {cached} ya analizados (índice)" if cached else "") + " — selecciona y pulsa Analizar "
             "(Cmd/Ctrl+A para todas)"
         )
 
@@ -3453,13 +3578,64 @@ class MacetaApp(tk.Tk):
             return
         self._start_analysis(iids)
 
-    def _start_analysis(self, iids):
-        items = [(iid, self.rows_by_iid[iid]) for iid in iids]
+    def on_reanalyze(self):
+        """Re-analiza ignorando el índice. Sobre la selección si hay, y
+        si no sobre toda la lista previa confirmación."""
+        iids = list(self.tree.selection())
+        if not iids:
+            iids = list(self.rows_by_iid.keys())
+            if not iids:
+                messagebox.showinfo("Maceta", "Primero selecciona una carpeta.")
+                return
+            if not messagebox.askyesno(
+                "Maceta",
+                f"No hay nada seleccionado.\n\n¿Re-analizar las {len(iids)} "
+                "canciones de la lista desde cero?\n\n"
+                "Se ignora el índice: volverá a decodificar cada fichero.",
+            ):
+                return
+        self._start_analysis(iids, force=True)
+
+    def _start_analysis(self, iids, force=False):
+        """Analiza las filas pedidas. Sin `force`, las que ya tienen
+        análisis válido (en memoria o en el índice) se saltan: con una
+        biblioteca grande volver a escanearla entera eran minutos."""
+        pending, skipped = [], 0
+        for iid in iids:
+            row = self.rows_by_iid.get(iid)
+            if row is None:
+                continue
+            if force:
+                row.pop("from_index", None)
+                pending.append((iid, row))
+                continue
+            if row.get("analyzed"):
+                skipped += 1
+                continue
+            if self.use_index_var.get() and hydrate_from_index(row):
+                skipped += 1
+                self._update_row_quiet(iid, row)
+                continue
+            pending.append((iid, row))
+
+        if not pending:
+            self.status.set(
+                f"Nada que analizar: {skipped} ya analizada(s). "
+                "Usa 🔄 Re-analizar para forzar.")
+            return
         self.progress.set(0)
-        self.status.set(f"Analizando {len(items)} archivos…")
+        extra = f" ({skipped} ya analizadas)" if skipped else ""
+        self.status.set(f"Analizando {len(pending)} archivos{extra}…")
         threading.Thread(
-            target=self._run_analysis, args=(items,), daemon=True
+            target=self._run_analysis, args=(pending,), daemon=True
         ).start()
+
+    def _update_row_quiet(self, iid, row):
+        """Repinta una fila sin tocar progreso ni estado."""
+        if iid not in self.rows_by_iid or not self.tree.exists(iid):
+            return
+        self.tree.item(iid, values=self._row_values(row),
+                       tags=(row["verdict"] or "PENDING",))
 
     def _run_analysis(self, items):
         total = len(items)
@@ -3482,8 +3658,11 @@ class MacetaApp(tk.Tk):
                     row["detail"] = str(e)[:160]
                     row["analyzed"] = True
                 self.rows_by_iid[iid] = row
+                if row.get("analyzed") and row.get("verdict") != "ERROR":
+                    index_put(row)
                 done += 1
                 self.after(0, self._update_row, iid, row, done, total)
+        save_index()
         self.after(0, self._analysis_done)
 
     def _mark_analyzing(self, iid, row):
@@ -4406,14 +4585,18 @@ class MacetaApp(tk.Tk):
         limit = int(self._num(self.results_limit, 300)) or 300
         sort_by = self.results_sort_var.get() or "score"
 
-        rows = []
+        rows, rejected = [], []
         for resp in responses or []:
             peer_bad = peer_rejection_reason(resp, filters)
             for f in (resp.get("files") or []):
                 why = peer_bad or rejection_reason(f, min_br, filters)
-                if why and not show_rejected:
-                    continue
-                rows.append((resp, f, why))
+                (rejected if why else rows).append((resp, f, why))
+        # Si no pasa ni uno, se enseñan igualmente los descartados con su
+        # motivo: un panel vacío con 13 ficheros encontrados no dice nada
+        # y no te deja bajarlos a mano aunque quieras.
+        n_ok = len(rows)
+        if show_rejected or not rows:
+            rows = rows + rejected
 
         sorters = {
             "score": lambda t: -score(t[0], t[1], query),
@@ -4426,6 +4609,12 @@ class MacetaApp(tk.Tk):
         # Los descartados siempre al final, ordenados entre ellos igual.
         rows.sort(key=lambda t: (bool(t[2]), key(t)))
         rows = rows[:limit]
+        reasons = {}
+        for _r, _f, why in rejected:
+            if why:
+                tag = re.sub(r"\s*\([^)]*\)", "", why).strip()
+                tag = re.sub(r"^~?\d+ kbps$", "bitrate bajo", tag)
+                reasons[tag] = reasons.get(tag, 0) + 1
 
         # Orden: num, name, queue, slot, size, ext, br, user, folder, speed
         num = self._search_num.get(sid, "")
@@ -4451,9 +4640,9 @@ class MacetaApp(tk.Tk):
             )
             items.append((vals, (resp, f), bool(why)))
 
-        self.after(0, self._populate_results, sid, items)
+        self.after(0, self._populate_results, sid, items, n_ok, reasons)
 
-    def _populate_results(self, sid, items):
+    def _populate_results(self, sid, items, n_ok=None, reasons=None):
         log.info("populate_results sid=%s items=%d current=%s",
                  sid, len(items), self._results_current_sid)
         if getattr(self, "_fetching_sid", None) == sid:
@@ -4467,25 +4656,31 @@ class MacetaApp(tk.Tk):
                 self.search_tree.item(sel[0], "tags")[0] != sid:
             log.info("populate skip: selection moved to another search")
             return
-        n_ok = 0
+        shown_ok = 0
         for vals, ref, rejected in items:
             item_iid = self.results_tree.insert(
                 "", tk.END, values=vals,
                 tags=("rejected",) if rejected else (),
             )
             self._results_items[item_iid] = ref
-            n_ok += not rejected
+            shown_ok += not rejected
         self._results_current_sid = sid
         n = self._search_num.get(sid, "?")
-        if items:
-            extra = (f" (+{len(items) - n_ok} descartados)"
-                     if len(items) > n_ok else "")
-            self.status.set(f"Resultados de #{n}: {n_ok}{extra}")
-        else:
+        n_ok = shown_ok if n_ok is None else n_ok
+        n_bad = len(items) - shown_ok
+        if n_ok:
+            extra = f" · {n_bad} en gris (no pasan el filtro)" if n_bad else ""
+            plural = "válido" if n_ok == 1 else "válidos"
+            self.status.set(f"Resultados de #{n}: {n_ok} {plural}{extra}")
+        elif items:
+            top = ", ".join(f"{v}× {k}" for k, v in sorted(
+                (reasons or {}).items(), key=lambda kv: -kv[1])[:3])
             self.status.set(
-                f"#{n}: 0 resultados aceptables "
-                f"(sube min bitrate en Preferencias si buscas menos estricto)"
-            )
+                f"#{n}: ninguno de los {len(items)} pasa el filtro"
+                + (f" ({top})" if top else "")
+                + " — se muestran en gris, puedes bajarlos igual")
+        else:
+            self.status.set(f"#{n}: la búsqueda no devolvió ningún fichero")
 
     def _download_selected_results(self):
         """Encola descarga de los resultados seleccionados en un hilo
@@ -4501,6 +4696,24 @@ class MacetaApp(tk.Tk):
         if client is None:
             messagebox.showwarning("Maceta", "slskd no configurado.")
             return
+        bad = [i for i in sel
+               if "rejected" in (self.results_tree.item(i, "tags") or ())]
+        if bad:
+            motivos = []
+            for i in bad[:5]:
+                name = self.results_tree.set(i, "name")
+                motivos.append("· " + name.lstrip("— ").strip())
+            resto = f"\n… y {len(bad) - 5} más" if len(bad) > 5 else ""
+            if not messagebox.askyesno(
+                "Maceta",
+                f"{len(bad)} de los seleccionados no pasan tus filtros:\n\n"
+                + "\n".join(motivos) + resto
+                + "\n\n¿Bajarlos igualmente?",
+            ):
+                sel = [i for i in sel if i not in bad]
+                if not sel:
+                    return
+
         sid = getattr(self, "_results_current_sid", None)
         n = self._search_num.get(sid) if sid else None
         link_iid = self._search_link_iid.get(sid) if sid else None
@@ -4782,6 +4995,7 @@ class MacetaApp(tk.Tk):
         self.on_stop_playback()
         self._save_column_widths()
         self._save_layout()
+        save_index()
         self.destroy()
 
     # ---------- Disposición de la ventana ----------
@@ -6117,6 +6331,15 @@ OPTION_TABS = [
       "label": "Reabrir la última carpeta al arrancar",
       "hint": "Vuelve a escanear donde lo dejaste. Apágalo si prefieres "
               "empezar siempre con la lista vacía."},
+     {"src": "app", "key": "use_index_var", "kind": "bool",
+      "label": "Recordar análisis ya hechos",
+      "hint": "Guarda BPM y corte de cada fichero en ~/.maceta_index.json "
+              "y los reutiliza en vez de volver a decodificar. Se invalida "
+              "solo si el fichero cambia de tamaño o fecha."},
+     {"kind": "action", "label": "Índice", "button": "Vaciar índice",
+      "cmd": "clear_index",
+      "hint": "Olvida todos los análisis guardados. La próxima vez habrá "
+              "que analizar desde cero."},
      {"kind": "action", "label": "Ventana", "button": "Olvidar posición",
       "cmd": "reset_layout",
       "hint": "Descarta el tamaño, el sitio y los divisores guardados."},
@@ -6385,6 +6608,10 @@ class OptionsDialog(tk.Toplevel):
 
     def _do_colors(self):
         ColorEditorDialog(self.app)
+
+    def _do_clear_index(self):
+        n = clear_index()
+        self._result_var.set(f"Índice vaciado: {n} análisis olvidados")
 
     def _do_reset_layout(self):
         save_user_state({"window_geometry": "", "sash": {}, "active_tab": 0})
