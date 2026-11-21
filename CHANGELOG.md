@@ -3,6 +3,30 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.34
+
+- **ARREGLADO: las búsquedas que no llegaban a 250 respuestas no bajaban
+  nada.** slskd no sirve ni una respuesta mientras la búsqueda está
+  `InProgress` — con 242 respuestas contadas, `/responses` devolvía 0 —
+  y Maceta leía a los 15 segundos, siempre antes de tiempo. Solo
+  funcionaban las búsquedas que tocaban el límite de 250 respuestas,
+  porque ese límite cierra la búsqueda al instante. Ahora Maceta cierra
+  la búsqueda ella misma (`PUT`, que conserva lo recogido) antes de leer,
+  y además espera lo suficiente para que slskd pueda cerrarla sola: la
+  espera eran 25 s cuando el propio slskd necesita 30.
+- **La ventana se queda como la dejaste**: tamaño, posición, pestaña
+  abierta y los divisores de los paneles se guardan y se restauran. Si
+  la posición guardada cae fuera de las pantallas actuales (un monitor
+  que ya no está), se conserva el tamaño y se centra.
+- **Carpetas recientes** en el menú Archivo: las últimas 8 carpetas
+  analizadas, un click para volver a cualquiera. Las que ya no existen
+  se filtran solas.
+- Dos opciones nuevas en el panel: *Reabrir la última carpeta al
+  arrancar* y *Olvidar posición* de la ventana.
+- **Instalador para macOS**: `install-mac.sh` monta Miniforge si hace
+  falta, crea el entorno, clona el repo y deja un `Maceta.app` en
+  Aplicaciones con el logo de icono.
+
 ## 0.4.33
 
 - **Logo propio**: Maceta ya tiene icono de ventana. Si `logo.png` está

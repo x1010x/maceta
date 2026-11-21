@@ -47,7 +47,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.33"
+VERSION = "0.4.34"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -347,6 +347,12 @@ USER_STATE_DEFAULTS = {
     "results_limit":              300,
     # {clave_tabla: {columna: ancho}} — anchos que el usuario deja a mano
     "column_widths":              {},
+    # --- Disposición de la ventana, para dejarla como la dejaste ---
+    "window_geometry":            "",      # "1080x600+45+38"
+    "active_tab":                 0,
+    "sash":                       {},      # {panel: [posiciones]}
+    "recent_folders":             [],
+    "restore_last_folder":        True,
     # --- Umbrales que antes vivían cableados en el código ---
     "target_bitrate":             320,     # GOOD_MP3_MIN_BR
     "opportunistic_floor":        192,     # OPPORTUNISTIC_FLOOR
@@ -944,8 +950,10 @@ class SlskdClient:
         no, nos rendíamos antes de que la búsqueda hubiese empezado.
 
         Acepta parciales: en cuanto haya ≥ `min_responses` respuestas
-        tras al menos 15 s, devolvemos. Así no perdemos búsquedas que
-        siguen recibiendo peers lentos pero ya tienen match útil.
+        tras al menos 15 s, cerramos la búsqueda y devolvemos. El cierre
+        no es opcional — slskd solo sirve las respuestas de búsquedas
+        completadas, así que devolver una InProgress equivalía a decir
+        "nadie respondió" teniendo 200 peers esperando.
         """
         queue_deadline = time.time() + max_queue_wait
         deadline = early_deadline = None
@@ -974,9 +982,12 @@ class SlskdClient:
                 return last
             rc = last.get("responseCount", 0) or 0
             if rc >= min_responses and now >= early_deadline:
-                return last
+                log.info("search %s: cierro con %d respuestas", search_id, rc)
+                return self.close_for_results(search_id, last)
             if now >= deadline:
-                return last
+                log.info("search %s: agotada la espera con %d respuestas, "
+                         "cierro para poder leerlas", search_id, rc)
+                return self.close_for_results(search_id, last)
             time.sleep(poll_interval)
 
     def enqueue_download(self, username: str, files: list) -> None:
@@ -991,7 +1002,38 @@ class SlskdClient:
         return self._request("GET", "/api/v0/searches").json() or []
 
     def stop_search(self, search_id: str) -> None:
+        """Borra la búsqueda de slskd. Las respuestas se van con ella."""
         self._request("DELETE", f"/api/v0/searches/{search_id}")
+
+    def cancel_search(self, search_id: str) -> None:
+        """Cierra la búsqueda SIN borrarla: pasa a 'Completed, Cancelled'
+        conservando todo lo recogido. Es la diferencia con `stop_search`,
+        y es imprescindible: slskd **no sirve ninguna respuesta mientras
+        la búsqueda está InProgress** — medido contra slskd 0.26, con 97
+        respuestas contadas `/responses` devolvía 0, y 2 s después de este
+        PUT devolvía 169."""
+        self._request("PUT", f"/api/v0/searches/{search_id}")
+
+    def close_for_results(self, search_id: str, last: dict = None,
+                          timeout: float = 6.0) -> dict:
+        """Cierra la búsqueda y espera a que slskd la marque completada,
+        que es cuando empieza a servir las respuestas."""
+        try:
+            self.cancel_search(search_id)
+        except Exception as e:
+            log.warning("cancel_search %s falló: %s", search_id, e)
+            return last or {}
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(0.5)
+            try:
+                info = self.get_search(search_id)
+            except Exception:
+                break
+            if "Completed" in str(info.get("state", "")):
+                return info
+            last = info or last
+        return last or {}
 
     # ---------- Mensajes privados ----------
 
@@ -1628,6 +1670,8 @@ class MacetaApp(tk.Tk):
             value=us["audio_match_threshold"])
         self.max_auto_requery_var = tk.IntVar(value=us["max_auto_requery"])
         self.auto_substitute_var = tk.BooleanVar(value=us["auto_substitute"])
+        self.restore_last_folder_var = tk.BooleanVar(
+            value=us["restore_last_folder"])
         apply_tunables(us)
         # iid → {"next_at": epoch_s, "attempts": int}
         self._retry_queue: dict = {}
@@ -1660,6 +1704,8 @@ class MacetaApp(tk.Tk):
         self._wire_state_persistence()
         self._col_save_job = None
         self._restore_column_widths()
+        self._layout_job = None
+        self.after(300, self._restore_layout)
         self.after(600, self._show_whats_new_if_updated)
         self.after(900, self._restore_last_folder)
         self.after(1500, self._startup_update_check)
@@ -1759,7 +1805,7 @@ class MacetaApp(tk.Tk):
         ttk.Label(top, textvariable=self.msg_status,
                   foreground="#777").pack(side=tk.LEFT, padx=12)
 
-        panes = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
+        panes = self._msg_panes = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
         panes.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
 
         left = ttk.Frame(panes)
@@ -1949,6 +1995,9 @@ class MacetaApp(tk.Tk):
         mb.add_cascade(label="Archivo", menu=m_file)
         m_file.add_command(label="Seleccionar carpeta…",
                            accelerator="⌘O", command=self.on_pick)
+        self._recent_menu = tk.Menu(m_file, tearoff=0)
+        m_file.add_cascade(label="Carpetas recientes", menu=self._recent_menu)
+        self._rebuild_recent_menu()
         m_file.add_command(label="Exportar CSV…",
                            accelerator="⌘S", command=self.on_export)
         m_file.add_separator()
@@ -2386,6 +2435,7 @@ class MacetaApp(tk.Tk):
             "audio_match_threshold":    float(self._num(self.audio_match_threshold, 0.85)),
             "max_auto_requery":         int(self._num(self.max_auto_requery_var, 3)),
             "auto_substitute":          bool(self.auto_substitute_var.get()),
+            "restore_last_folder":      bool(self.restore_last_folder_var.get()),
         })
 
     @staticmethod
@@ -2419,7 +2469,7 @@ class MacetaApp(tk.Tk):
             self.active_bucket.set(us["active_bucket"])
         if "filter_pending" in us:
             self.filter_pending_sub_var.set(bool(us["filter_pending"]))
-        if last and os.path.isdir(last):
+        if last and os.path.isdir(last) and self.restore_last_folder_var.get():
             self.folder.set(last)
             self.status.set(f"Restaurando carpeta previa: {last}")
             threading.Thread(
@@ -2589,10 +2639,11 @@ class MacetaApp(tk.Tk):
 
         # ── PanedWindow vertical: (arriba) Búsquedas | Resultados,
         # (abajo) Descargas — el usuario puede arrastrar los divisores.
-        main = ttk.PanedWindow(parent, orient=tk.VERTICAL)
+        main = self._activity_panes = ttk.PanedWindow(parent, orient=tk.VERTICAL)
         main.pack(fill=tk.BOTH, expand=True, padx=8, pady=(4, 8))
 
-        top_paned = ttk.PanedWindow(main, orient=tk.HORIZONTAL)
+        top_paned = self._activity_top_panes = ttk.PanedWindow(
+            main, orient=tk.HORIZONTAL)
         main.add(top_paned, weight=1)
 
         # --- Búsquedas (izquierda) ---
@@ -3301,13 +3352,7 @@ class MacetaApp(tk.Tk):
         d = filedialog.askdirectory(title="Elige la carpeta con las canciones")
         if not d:
             return
-        self.folder.set(d)
-        self._save_current_state()
-        self.tree.delete(*self.tree.get_children())
-        self.rows_by_iid.clear()
-        self.progress.set(0)
-        self.status.set(f"Leyendo metadatos de {d}…")
-        threading.Thread(target=self._scan_folder, args=(d,), daemon=True).start()
+        self.open_folder(d)
 
     def _scan_folder(self, folder):
         t0 = time.time()
@@ -4736,7 +4781,134 @@ class MacetaApp(tk.Tk):
     def _on_close(self):
         self.on_stop_playback()
         self._save_column_widths()
+        self._save_layout()
         self.destroy()
+
+    # ---------- Disposición de la ventana ----------
+
+    def _panes(self) -> dict:
+        """Los PanedWindow cuyos divisores merece la pena recordar."""
+        return {k: w for k, w in (
+            ("mensajes", getattr(self, "_msg_panes", None)),
+            ("actividad", getattr(self, "_activity_panes", None)),
+            ("actividad_top", getattr(self, "_activity_top_panes", None)),
+        ) if w is not None}
+
+    def _save_layout(self):
+        """Tamaño y sitio de la ventana, pestaña abierta y divisores."""
+        try:
+            geo = self.geometry()
+        except Exception:
+            return
+        sash = {}
+        for name, pane in self._panes().items():
+            pos = []
+            i = 0
+            while True:
+                try:
+                    pos.append(pane.sashpos(i))
+                except Exception:
+                    break
+                i += 1
+            # Un panel de una pestaña que todavía no se ha mostrado
+            # devuelve 0: guardarlo colapsaría el divisor al reabrir.
+            if any(p > 0 for p in pos):
+                sash[name] = pos
+        try:
+            tab = self.notebook.index(self.notebook.select())
+        except Exception:
+            tab = 0
+        save_user_state({"window_geometry": geo, "active_tab": int(tab),
+                         "sash": sash})
+
+    def _schedule_layout_save(self, _event=None):
+        """<Configure> dispara en cada píxel de un arrastre: agrupamos."""
+        if getattr(self, "_layout_job", None):
+            try:
+                self.after_cancel(self._layout_job)
+            except Exception:
+                pass
+        self._layout_job = self.after(1200, self._save_layout)
+
+    def _restore_layout(self):
+        """Devuelve la ventana a donde estaba. Si la geometría guardada
+        cae fuera de las pantallas actuales (un monitor que ya no está),
+        se ignora la posición y se queda el tamaño."""
+        us = self._user_state
+        geo = us.get("window_geometry") or ""
+        m = re.match(r"^(\d+)x(\d+)([+-]\d+)([+-]\d+)$", geo)
+        if m:
+            w, h, x, y = (int(m.group(1)), int(m.group(2)),
+                          int(m.group(3)), int(m.group(4)))
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+            w, h = max(700, min(w, sw)), max(400, min(h, sh))
+            if -50 <= x <= sw - 100 and 0 <= y <= sh - 100:
+                self.geometry(f"{w}x{h}+{x}+{y}")
+            else:
+                self.geometry(f"{w}x{h}")
+        try:
+            tab = int(us.get("active_tab") or 0)
+            if 0 <= tab < self.notebook.index("end"):
+                self.notebook.select(tab)
+        except Exception:
+            pass
+        saved = us.get("sash") or {}
+        for name, pane in self._panes().items():
+            for i, pos in enumerate(saved.get(name) or []):
+                if int(pos) <= 0:
+                    continue
+                try:
+                    pane.sashpos(i, int(pos))
+                except Exception:
+                    pass
+        self.bind("<Configure>", self._schedule_layout_save, add="+")
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           self._schedule_layout_save, add="+")
+
+    # ---------- Carpetas recientes ----------
+
+    def _push_recent_folder(self, folder):
+        recent = [f for f in (self._user_state.get("recent_folders") or [])
+                  if f != folder]
+        recent.insert(0, folder)
+        recent = recent[:8]
+        self._user_state["recent_folders"] = recent
+        save_user_state({"recent_folders": recent})
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self):
+        menu = getattr(self, "_recent_menu", None)
+        if menu is None:
+            return
+        menu.delete(0, "end")
+        recent = [f for f in (self._user_state.get("recent_folders") or [])
+                  if os.path.isdir(f)]
+        if not recent:
+            menu.add_command(label="(ninguna todavía)", state="disabled")
+            return
+        for f in recent:
+            menu.add_command(label=f.replace(str(Path.home()), "~"),
+                             command=lambda d=f: self.open_folder(d))
+        menu.add_separator()
+        menu.add_command(label="Olvidar la lista",
+                         command=self._clear_recent_folders)
+
+    def _clear_recent_folders(self):
+        self._user_state["recent_folders"] = []
+        save_user_state({"recent_folders": []})
+        self._rebuild_recent_menu()
+
+    def open_folder(self, d):
+        """Escanea una carpeta y la apunta en las recientes."""
+        self.folder.set(d)
+        self._push_recent_folder(d)
+        self._save_current_state()
+        self.tree.delete(*self.tree.get_children())
+        self.rows_by_iid.clear()
+        self.progress.set(0)
+        self.status.set(f"Leyendo metadatos de {d}…")
+        threading.Thread(target=self._scan_folder, args=(d,),
+                         daemon=True).start()
 
     # ---------- Anchos de columna persistentes ----------
 
@@ -5159,7 +5331,10 @@ class MacetaApp(tk.Tk):
             self._search_num[sid] = n
             if link_iid:
                 self._search_link_iid[sid] = link_iid
-        client.wait_for_search(sid, max_wait=25)
+        # Sin max_wait a mano: 25 s era menos que el searchTimeout de 30 s
+        # que le pedimos a slskd, así que nos rendíamos antes de que la
+        # búsqueda pudiera cerrarse sola.
+        client.wait_for_search(sid)
         responses = client.get_responses(sid)
         pick = None
         ref_row = self.rows_by_iid.get(link_iid) if link_iid else None
@@ -5937,6 +6112,15 @@ OPTION_TABS = [
       "label": "Tamaño máximo de descarga (MB)",
       "hint": "Descarta discos enteros colados como una sola canción."},
     ]),
+    ("General", [
+     {"src": "app", "key": "restore_last_folder_var", "kind": "bool",
+      "label": "Reabrir la última carpeta al arrancar",
+      "hint": "Vuelve a escanear donde lo dejaste. Apágalo si prefieres "
+              "empezar siempre con la lista vacía."},
+     {"kind": "action", "label": "Ventana", "button": "Olvidar posición",
+      "cmd": "reset_layout",
+      "hint": "Descarta el tamaño, el sitio y los divisores guardados."},
+    ]),
     ("Búsqueda", [
      {"src": "app", "key": "query_mode_var", "kind": "choice",
       "choices": ["raw", "clean", "tags"],
@@ -6201,6 +6385,11 @@ class OptionsDialog(tk.Toplevel):
 
     def _do_colors(self):
         ColorEditorDialog(self.app)
+
+    def _do_reset_layout(self):
+        save_user_state({"window_geometry": "", "sash": {}, "active_tab": 0})
+        self._result_var.set(
+            "Posición olvidada — se nota al reiniciar Maceta")
 
     def _do_reset_columns(self):
         save_user_state({"column_widths": {}})
