@@ -3,6 +3,19 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.42
+
+- **"🔍 Encontrar en Biblioteca"** por botón derecho en Actividad
+  Soulseek — sobre una búsqueda, un resultado o una descarga — y también
+  en la pestaña Descargas. Salta a Biblioteca, **quita los filtros que
+  la esconderían** y deja la canción marcada. Para encontrarla usa, por
+  este orden: el enlace que se guardó al encolar la descarga, la
+  búsqueda asociada a la fila, y el parecido del nombre.
+- **Tipografía configurable** en Opciones → Apariencia: elige entre las
+  tipografías instaladas y el tamaño base de la interfaz. Afecta a
+  menús, botones y tablas. «(la del sistema)» devuelve la de macOS, y
+  cada tabla conserva además su A− / A+.
+
 ## 0.4.41
 
 - **IMPORTANTE: los botones actúan sobre la carpeta que tengas abierta.**

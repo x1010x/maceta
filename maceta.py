@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.41"
+VERSION = "0.4.42"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -364,6 +364,8 @@ USER_STATE_DEFAULTS = {
     "show_all_downloads":         False,  # incluir búsquedas sin descarga
     "font_sizes":                 {},     # {tabla: tamaño de letra}
     "compact_cols":               True,   # Formato+Bitrate+SR en una celda
+    "font_family":                "",     # "" = la del sistema
+    "ui_font_size":               0,      # 0 = la del sistema
     # --- Umbrales que antes vivían cableados en el código ---
     "target_bitrate":             320,     # GOOD_MP3_MIN_BR
     "opportunistic_floor":        192,     # OPPORTUNISTIC_FLOOR
@@ -2187,6 +2189,9 @@ class MacetaApp(tk.Tk):
         self.smart_search_var = tk.BooleanVar(value=us["smart_search"])
         self.show_all_dl_var = tk.BooleanVar(value=us["show_all_downloads"])
         self.compact_cols_var = tk.BooleanVar(value=us["compact_cols"])
+        self._ui_font_orig = {}
+        self.font_family_var = tk.StringVar(value=us.get("font_family") or "")
+        self.ui_font_size_var = tk.IntVar(value=us.get("ui_font_size") or 0)
         self.font_sizes = dict(us.get("font_sizes") or {})
         self._font_keys = {}
         # Descargas que hemos cancelado nosotros: no cuentan como falta
@@ -2227,7 +2232,8 @@ class MacetaApp(tk.Tk):
         self._col_save_job = None
         self._restore_column_widths()
         self._layout_job = None
-        self._restore_font_sizes()
+        self._snapshot_ui_fonts()
+        self._apply_ui_font()
         self.after(300, self._restore_layout)
         self.after(600, self._show_whats_new_if_updated)
         self.after(900, self._restore_last_folder)
@@ -2721,11 +2727,101 @@ class MacetaApp(tk.Tk):
         m.add_command(label="Rebuscar (editar query)…",
                       command=self.on_research,
                       state=("normal" if has else "disabled"))
+        m.add_command(label="🔍 Encontrar en Biblioteca",
+                      command=self._find_from_search,
+                      state=("normal" if has else "disabled"))
         m.add_separator()
         m.add_command(label="Cancelar",
                       command=self.on_cancel_search,
                       state=("normal" if has else "disabled"))
         return m
+
+    def find_in_library(self, nombre, sid=None, user=None, remote=None):
+        """Lleva a Biblioteca y marca la canción que corresponde.
+
+        Busca en este orden: el link que se guardó al encolar la
+        descarga, la búsqueda enlazada a la fila, y por último el
+        parecido de nombre. Quita los filtros que la esconderían."""
+        iid = None
+        if user and remote:
+            iid = self.pending_dl_links.get((user, (remote or "").lower()))
+        if not iid and nombre:
+            link = get_download_link(Path(nombre).name)
+            if link.get("original_path"):
+                iid = self._iid_for_path(link["original_path"])
+        if not iid and sid:
+            iid = self._search_link_iid.get(sid)
+        if iid and iid not in self.rows_by_iid:
+            iid = None
+        if not iid and nombre:
+            stem = Path(nombre).stem
+            mejor, mejor_sim = None, 0.0
+            for cand, row in self.rows_by_iid.items():
+                sim = name_similarity(stem, row.get("name") or "")
+                if sim > mejor_sim:
+                    mejor, mejor_sim = cand, sim
+            if mejor_sim >= 0.6:
+                iid = mejor
+        if not iid:
+            messagebox.showinfo(
+                "Maceta",
+                f"No encuentro «{Path(nombre or '').stem[:50]}» en la "
+                "biblioteca cargada.\n\nPuede que esté en otra carpeta: "
+                "ábrela y vuelve a intentarlo.")
+            return
+        self._focus_library_row(iid)
+
+    def _focus_library_row(self, iid):
+        """Quita filtros, salta a Biblioteca y deja la fila marcada."""
+        self.folder_filter = ""
+        self.active_bucket.set("todas")
+        self.filter_var.set("")
+        self.filter_pending_sub_var.set(False)
+        self._apply_filter()
+        self.notebook.select(0)
+        if self.tree.exists(iid):
+            self.tree.selection_set(iid)
+            self.tree.focus(iid)
+            self.tree.see(iid)
+            row = self.rows_by_iid.get(iid) or {}
+            self.status.set(f"📍 {row.get('name', '')}")
+
+    def _find_from_downloads(self):
+        sel = self.dl_tree.selection()
+        if not sel:
+            return
+        tags = self.dl_tree.item(sel[0], "tags")
+        user = tags[0] if tags and tags[0] != "virtual" else None
+        nombre = self.dl_tree.set(sel[0], "file")
+        self.find_in_library(nombre, user=user, remote=nombre)
+
+    def _find_from_search(self):
+        sel = self.search_tree.selection()
+        if not sel:
+            return
+        tags = self.search_tree.item(sel[0], "tags")
+        self.find_in_library(self.search_tree.set(sel[0], "query"),
+                             sid=tags[0] if tags else None)
+
+    def _find_from_results(self):
+        sel = self.results_tree.selection()
+        if not sel:
+            return
+        ref = self._results_items.get(sel[0])
+        nombre = ""
+        if ref:
+            nombre = (ref[1].get("filename") or "").replace("\\", "/")
+            nombre = nombre.rsplit("/", 1)[-1]
+        self.find_in_library(nombre,
+                             sid=getattr(self, "_results_current_sid", None))
+
+    def _find_from_downloads_tab(self):
+        sel = self.dl_files_tree.selection()
+        if not sel:
+            return
+        p = self._dl_files_paths.get(sel[0])
+        if p:
+            self.find_in_library(p.name)
 
     def _build_dl_context(self, iid):
         m = tk.Menu(self, tearoff=0)
@@ -2741,6 +2837,9 @@ class MacetaApp(tk.Tk):
             label=f"💬 Escribir a {user}…" if user else "💬 Escribir al usuario…",
             command=lambda: self.on_open_conversation_for(user),
             state=("normal" if user else "disabled"))
+        m.add_command(label="🔍 Encontrar en Biblioteca",
+                      command=self._find_from_downloads,
+                      state=("normal" if has else "disabled"))
         m.add_separator()
         m.add_command(
             label="Cancelar",
@@ -2757,6 +2856,9 @@ class MacetaApp(tk.Tk):
         user = self.results_tree.set(iid, "user") if iid else ""
         m.add_command(label="⬇ Descargar seleccionados",
                       command=self._download_selected_results,
+                      state=("normal" if iid else "disabled"))
+        m.add_command(label="🔍 Encontrar en Biblioteca",
+                      command=self._find_from_results,
                       state=("normal" if iid else "disabled"))
         m.add_separator()
         m.add_command(
@@ -2982,6 +3084,8 @@ class MacetaApp(tk.Tk):
             "ban_window_min":           int(self._num(self.ban_window_min_var, 60)),
             "smart_search":             bool(self.smart_search_var.get()),
             "show_all_downloads":       bool(self.show_all_dl_var.get()),
+            "font_family":              self.font_family_var.get() or "",
+            "ui_font_size":             int(self._num(self.ui_font_size_var, 0)),
         })
 
     @staticmethod
@@ -3279,6 +3383,66 @@ class MacetaApp(tk.Tk):
                    ).pack(side=tk.LEFT, padx=(2, 0))
         self._font_keys[key] = tree_getter
         return box
+
+    UI_FONTS = ("TkDefaultFont", "TkTextFont", "TkMenuFont",
+                "TkHeadingFont", "TkTooltipFont", "TkIconFont")
+
+    def available_font_families(self) -> list:
+        """Tipografías instaladas, sin las internas que empiezan por "."."""
+        from tkinter import font as tkfont
+        fams = sorted({f for f in tkfont.families() if not f.startswith(".")},
+                      key=str.lower)
+        return ["(la del sistema)"] + fams
+
+    def _apply_ui_font(self):
+        """Cambia la tipografía (y el tamaño base) de toda la interfaz.
+
+        Toca las fuentes con nombre de Tk, así que afecta a menús,
+        botones y etiquetas de una vez. Las tablas se repintan luego con
+        `_restore_font_sizes`, que lee de aquí la familia."""
+        from tkinter import font as tkfont
+        fam = (self.font_family_var.get() or "").strip()
+        if fam in ("", "(la del sistema)"):
+            fam = None
+        try:
+            size = int(self._num(self.ui_font_size_var, 0))
+        except Exception:
+            size = 0
+        for nombre in self.UI_FONTS:
+            try:
+                f = tkfont.nametofont(nombre)
+            except Exception:
+                continue
+            if not hasattr(self, "_ui_font_base"):
+                pass
+            cambios = {}
+            if fam:
+                cambios["family"] = fam
+            elif self._ui_font_orig.get(nombre):
+                cambios["family"] = self._ui_font_orig[nombre][0]
+            if size:
+                cambios["size"] = max(self.FONT_MIN, min(self.FONT_MAX, size))
+            elif self._ui_font_orig.get(nombre):
+                cambios["size"] = self._ui_font_orig[nombre][1]
+            if cambios:
+                try:
+                    f.configure(**cambios)
+                except Exception as e:
+                    log.warning("no se pudo aplicar la fuente %s: %s",
+                                nombre, e)
+        self._restore_font_sizes()
+
+    def _snapshot_ui_fonts(self):
+        """Guarda familia y tamaño originales para poder volver."""
+        from tkinter import font as tkfont
+        self._ui_font_orig = {}
+        for nombre in self.UI_FONTS:
+            try:
+                f = tkfont.nametofont(nombre)
+                self._ui_font_orig[nombre] = (f.cget("family"),
+                                              int(f.cget("size")))
+            except Exception:
+                pass
 
     def _base_font_size(self) -> int:
         from tkinter import font as tkfont
@@ -4166,6 +4330,9 @@ class MacetaApp(tk.Tk):
                       state=("normal" if has else "disabled"))
         m.add_command(label="🪄 Sustituir original (auto)",
                       command=self._substitute_from_downloads_tab,
+                      state=("normal" if has else "disabled"))
+        m.add_command(label="🔍 Encontrar en Biblioteca",
+                      command=self._find_from_downloads_tab,
                       state=("normal" if has else "disabled"))
         m.add_separator()
         m.add_command(label="Mostrar en Finder",
@@ -7736,6 +7903,19 @@ OPTION_TABS = [
       "cmd": "test_update", "hint": ""},
     ]),
     ("Apariencia", [
+     {"src": "app", "key": "font_family_var", "kind": "fontfamily",
+      "label": "Tipografía de la interfaz",
+      "hint": "Se aplica a menús, botones y tablas. «(la del sistema)» "
+              "devuelve la de macOS."},
+     {"src": "app", "key": "ui_font_size_var", "kind": "int",
+      "min": 0, "max": 22, "step": 1,
+      "label": "Tamaño base de la interfaz",
+      "hint": "0 = el del sistema. Cada tabla mantiene además su propio "
+              "A− / A+."},
+     {"kind": "action", "label": "Tipografía", "button": "Aplicar ahora",
+      "cmd": "apply_font",
+      "hint": "Los cambios de tipografía se ven al pulsar aquí o al "
+              "guardar."},
      {"kind": "action", "label": "Colores", "button": "🎨 Editar colores…",
       "cmd": "colors",
       "hint": "Fondo, texto y color de cada veredicto."},
@@ -7840,6 +8020,10 @@ class OptionsDialog(tk.Toplevel):
         if kind == "choice":
             return ttk.Combobox(frame, textvariable=var, width=14,
                                 state="readonly", values=f["choices"])
+        if kind == "fontfamily":
+            return ttk.Combobox(frame, textvariable=var, width=28,
+                                state="readonly",
+                                values=self.app.available_font_families())
         if kind == "secret":
             return ttk.Entry(frame, textvariable=var, show="•", width=46)
         if kind == "path":
@@ -7888,6 +8072,10 @@ class OptionsDialog(tk.Toplevel):
     def _do_banned(self):
         BannedPeersDialog(self.app)
 
+    def _do_apply_font(self):
+        self.app._apply_ui_font()
+        self._result_var.set("Tipografía aplicada")
+
     def _do_colors(self):
         ColorEditorDialog(self.app)
 
@@ -7914,6 +8102,7 @@ class OptionsDialog(tk.Toplevel):
             cfg[key] = v if isinstance(v, bool) else str(v).strip()
         save_config(cfg)
         self.app._save_current_state()
+        self.app._apply_ui_font()
         apply_tunables()
         self.app._update_pref_indicator()
         self.app.status.set("Opciones guardadas")
