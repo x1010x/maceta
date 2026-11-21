@@ -47,7 +47,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.35"
+VERSION = "0.4.37"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -354,6 +354,13 @@ USER_STATE_DEFAULTS = {
     "recent_folders":             [],
     "restore_last_folder":        True,
     "use_index":                  True,
+    # --- Peers que nos tumban las descargas ---
+    "banned_peers":               [],     # usuarios que ya no se usan
+    "peer_strikes":               {},     # {usuario: [timestamps]}
+    "ban_strikes":                3,      # cancelaciones para banear
+    "ban_window_min":             60,     # ventana en minutos
+    "smart_search":               True,   # reintenta con menos palabras
+    "show_all_downloads":         False,  # incluir búsquedas sin descarga
     # --- Umbrales que antes vivían cableados en el código ---
     "target_bitrate":             320,     # GOOD_MP3_MIN_BR
     "opportunistic_floor":        192,     # OPPORTUNISTIC_FLOOR
@@ -1019,17 +1026,42 @@ class SlskdClient:
         """`search_timeout_ms` = tiempo que slskd espera peers antes de
         cerrar la búsqueda con 'Completed, TimedOut'. Default de slskd
         es 15000 (15 s). Con 30 s cazamos peers más lentos."""
-        r = self._request(
-            "POST", "/api/v0/searches",
-            json={
-                "searchText": query,
-                "filterResponses": True,
-                "fileLimit": 5000,
-                "minimumResponseFileCount": 1,
-                "searchTimeout": search_timeout_ms,
-            },
-        )
-        return r.json()
+        payload = {
+            "searchText": query,
+            "filterResponses": True,
+            "fileLimit": 5000,
+            "minimumResponseFileCount": 1,
+            "searchTimeout": search_timeout_ms,
+        }
+        try:
+            return self._request("POST", "/api/v0/searches",
+                                 json=payload).json()
+        except requests.HTTPError as e:
+            if getattr(e.response, "status_code", None) != 409:
+                raise
+            # slskd devuelve 409 si ya hay una búsqueda viva con el mismo
+            # texto. En vez de fallar, nos enganchamos a esa: pasa cuando
+            # dos canciones generan la misma query o con el rebusque auto.
+            existing = self.find_active_search(query)
+            if existing:
+                log.info("409 en '%s': reutilizo la búsqueda %s",
+                         query, existing.get("id"))
+                return existing
+            raise
+
+    def find_active_search(self, query: str) -> dict:
+        """Búsqueda sin terminar con ese mismo texto, o {}."""
+        want = (query or "").strip().lower()
+        try:
+            searches = self.list_searches()
+        except Exception:
+            return {}
+        for s in searches or []:
+            if (s.get("searchText") or "").strip().lower() != want:
+                continue
+            if "Completed" not in str(s.get("state", "")):
+                return s
+        return {}
 
     def get_search(self, search_id: str) -> dict:
         r = self._request("GET", f"/api/v0/searches/{search_id}")
@@ -1290,6 +1322,52 @@ def apply_tunables(state: dict = None) -> None:
     AUDIO_MATCH_THRESHOLD = _n("audio_match_threshold", float, 0.3, 1.0)
 
 
+# Palabras que no distinguen una canción de otra y solo sirven para que
+# ningún peer encuentre nada.
+QUERY_NOISE = {
+    "the", "a", "an", "of", "and", "feat", "ft", "featuring", "with",
+    "de", "la", "el", "los", "las", "y", "del", "un", "una",
+    "remastered", "remaster", "version", "original", "official", "audio",
+    "video", "hd", "hq", "stereo", "mono", "edit", "mix", "lp", "ep",
+    "album", "single", "track", "bonus", "live",
+}
+
+
+def query_fallbacks(query: str, max_variants: int = 2) -> list:
+    """Variantes progresivamente más cortas de una query, para cuando la
+    exacta no devuelve nada.
+
+    Un peer con la canción puede tenerla nombrada de otra forma: sobran
+    las palabras de relleno, el año o la mitad del título. Se devuelven
+    como mucho `max_variants`, siempre con dos palabras o más — con una
+    sola palabra Soulseek devuelve ruido."""
+    toks = query_tokens(query)
+    if len(toks) < 3:
+        return []
+    out = []
+
+    def push(words):
+        cand = " ".join(words).strip()
+        low = cand.lower()
+        if (len(words) >= 2 and low != " ".join(toks).lower()
+                and low not in [o.lower() for o in out]):
+            out.append(cand)
+
+    # 1. sin palabras de relleno ni años sueltos
+    core = [t for t in toks
+            if t.lower() not in QUERY_NOISE and not re.fullmatch(r"\d{4}", t)]
+    push(core)
+    # 2. las primeras palabras: el artista y el principio del título
+    base = core or toks
+    if len(base) > 4:
+        push(base[:4])
+    # 3. las tres más largas, que suelen ser las distintivas
+    if len(base) > 3:
+        longest = sorted(base, key=len, reverse=True)[:3]
+        push([t for t in base if t in longest])
+    return out[:max_variants]
+
+
 def _tags_of(row):
     """Devuelve (artist, title, album) leídos vía mutagen, o strings vacíos."""
     try:
@@ -1490,6 +1568,9 @@ def is_acceptable(f: dict, min_bitrate: int = GOOD_MP3_MIN_BR,
 def peer_rejection_reason(resp: dict, filters: dict = None) -> str:
     """Motivo por el que un peer no sirve, o "" si sirve."""
     filters = filters or {}
+    banned = filters.get("banned")
+    if banned and (resp.get("username") or "") in banned:
+        return "usuario baneado"
     if filters.get("only_available") and not _is_available_peer(resp):
         return "sin slot libre"
     max_q = filters.get("max_queue", 0) or 0
@@ -1778,6 +1859,15 @@ class MacetaApp(tk.Tk):
         self.restore_last_folder_var = tk.BooleanVar(
             value=us["restore_last_folder"])
         self.use_index_var = tk.BooleanVar(value=us["use_index"])
+        self.banned_peers = list(us.get("banned_peers") or [])
+        self.peer_strikes = dict(us.get("peer_strikes") or {})
+        self.ban_strikes_var = tk.IntVar(value=us["ban_strikes"])
+        self.ban_window_min_var = tk.IntVar(value=us["ban_window_min"])
+        self.smart_search_var = tk.BooleanVar(value=us["smart_search"])
+        self.show_all_dl_var = tk.BooleanVar(value=us["show_all_downloads"])
+        # Descargas que hemos cancelado nosotros: no cuentan como falta
+        # del peer. Clave (usuario, fichero_lower), igual que el resto.
+        self._self_cancelled: set = set()
         apply_tunables(us)
         # iid → {"next_at": epoch_s, "attempts": int}
         self._retry_queue: dict = {}
@@ -2156,6 +2246,8 @@ class MacetaApp(tk.Tk):
         m_sk.add_command(label="Limpiar descargas completadas",
                          command=self.on_clear_downloads)
         m_sk.add_separator()
+        m_sk.add_command(label="🚫 Usuarios baneados…",
+                         command=self.on_banned_peers)
         m_sk.add_command(label="⚙ Config Soulseek…",
                          command=self.on_slsk_config)
 
@@ -2550,6 +2642,12 @@ class MacetaApp(tk.Tk):
             "auto_substitute":          bool(self.auto_substitute_var.get()),
             "restore_last_folder":      bool(self.restore_last_folder_var.get()),
             "use_index":                bool(self.use_index_var.get()),
+            "banned_peers":             list(self.banned_peers),
+            "peer_strikes":             self.peer_strikes,
+            "ban_strikes":              int(self._num(self.ban_strikes_var, 3)),
+            "ban_window_min":           int(self._num(self.ban_window_min_var, 60)),
+            "smart_search":             bool(self.smart_search_var.get()),
+            "show_all_downloads":       bool(self.show_all_dl_var.get()),
         })
 
     @staticmethod
@@ -2571,6 +2669,7 @@ class MacetaApp(tk.Tk):
             "max_queue":      int(self._num(self.search_max_queue, 0)),
             "formats":        {e for e, v in self.search_format_vars.items()
                                if v.get()},
+            "banned":         set(self.banned_peers),
         }
 
     def _restore_last_folder(self):
@@ -2753,6 +2852,18 @@ class MacetaApp(tk.Tk):
             command=self._save_current_state,
         ).pack(side=tk.LEFT, padx=(12, 0))
 
+        # ── Resumen de lo que está pasando, al estilo de los chips de
+        # Biblioteca: de un vistazo, cuántas buscan, cuántas encontraron
+        # y cuántas descargas van bien.
+        stats = ttk.Frame(parent, padding=(8, 4, 8, 0))
+        stats.pack(fill=tk.X)
+        self.act_search_stats = tk.StringVar(value="🔎 sin búsquedas")
+        self.act_dl_stats = tk.StringVar(value="📥 sin descargas")
+        ttk.Label(stats, textvariable=self.act_search_stats).pack(side=tk.LEFT)
+        ttk.Separator(stats, orient="vertical").pack(
+            side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Label(stats, textvariable=self.act_dl_stats).pack(side=tk.LEFT)
+
         # ── PanedWindow vertical: (arriba) Búsquedas | Resultados,
         # (abajo) Descargas — el usuario puede arrastrar los divisores.
         main = self._activity_panes = ttk.PanedWindow(parent, orient=tk.VERTICAL)
@@ -2771,6 +2882,11 @@ class MacetaApp(tk.Tk):
             selectmode="extended", height=6,
         )
         s_wrap.pack(fill=tk.BOTH, expand=True)
+        # Rojo: nadie respondió. Ámbar: respondieron pero tus filtros
+        # dejan fuera todo lo que ofrecen.
+        self.search_tree.tag_configure("nores", foreground="#d04a3f")
+        self.search_tree.tag_configure("filtered", foreground="#c9890a")
+        self._search_usable = {}
         for c, (t, w) in [
                 ("num",       ("#",        40)),
                 ("query",     ("Query",    280)),
@@ -2856,6 +2972,8 @@ class MacetaApp(tk.Tk):
             selectmode="extended", height=6,
         )
         d_wrap.pack(fill=tk.BOTH, expand=True)
+        # Las filas "fantasma" (búsquedas que no bajaron nada) en gris.
+        self.dl_tree.tag_configure("virtual", foreground="#9a9a9a")
         for c, (t, w) in [
                 ("num",      ("#",       40)),
                 ("file",     ("Fichero", 320)),
@@ -2883,6 +3001,10 @@ class MacetaApp(tk.Tk):
                    command=self.on_clear_downloads).pack(side=tk.LEFT, padx=4)
         ttk.Button(d_btns, text="🧹 Vaciar lista",
                    command=self.on_clear_dl_list).pack(side=tk.LEFT, padx=4)
+        ttk.Checkbutton(d_btns, text="Mostrar todas",
+                        variable=self.show_all_dl_var,
+                        command=self._on_show_all_dl).pack(side=tk.LEFT,
+                                                           padx=(10, 0))
         ttk.Button(d_btns, text="↻",
                    command=self._activity_tick, width=3).pack(side=tk.LEFT)
 
@@ -3448,6 +3570,9 @@ class MacetaApp(tk.Tk):
     def on_colors_config(self):
         ColorEditorDialog(self)
 
+    def on_banned_peers(self):
+        BannedPeersDialog(self)
+
     def on_options(self, tab=None):
         OptionsDialog(self, tab=tab)
 
@@ -3469,10 +3594,21 @@ class MacetaApp(tk.Tk):
             self.tree.move(iid, "", i)
 
     def on_pick(self):
-        d = filedialog.askdirectory(title="Elige la carpeta con las canciones")
+        d = filedialog.askdirectory(
+            title="Elige la carpeta con las canciones",
+            initialdir=self._last_browse_dir())
         if not d:
             return
         self.open_folder(d)
+
+    def _last_browse_dir(self) -> str:
+        """Dónde abrir el diálogo: la carpeta en uso, si no la última
+        reciente que siga existiendo, y si no el home."""
+        for cand in [self.folder.get()] + list(
+                self._user_state.get("recent_folders") or []):
+            if cand and os.path.isdir(cand):
+                return cand
+        return str(Path.home())
 
     def _scan_folder(self, folder):
         t0 = time.time()
@@ -3888,17 +4024,26 @@ class MacetaApp(tk.Tk):
                 str(s.get("responseCount", 0)),
                 str(s.get("fileCount", 0)),
             )
+            state_s = str(s.get("state", ""))
+            rc = s.get("responseCount") or 0
+            usable = self._search_usable.get(sid)
+            tag2 = ""
+            if "Completed" in state_s and rc == 0:
+                tag2 = "nores"
+            elif usable == 0 and (s.get("fileCount") or 0):
+                tag2 = "filtered"
+            tags = (sid, tag2) if tag2 else (sid,)
             iid = self._activity_search_iids.get(sid)
             if iid and self.search_tree.exists(iid):
-                if self._activity_search_vals.get(iid) != vals:
-                    self.search_tree.item(iid, values=vals)
-                    self._activity_search_vals[iid] = vals
+                if self._activity_search_vals.get(iid) != vals + (tag2,):
+                    self.search_tree.item(iid, values=vals, tags=tags)
+                    self._activity_search_vals[iid] = vals + (tag2,)
             else:
                 iid = self.search_tree.insert(
-                    "", tk.END, values=vals, tags=(sid,)
+                    "", tk.END, values=vals, tags=tags
                 )
                 self._activity_search_iids[sid] = iid
-                self._activity_search_vals[iid] = vals
+                self._activity_search_vals[iid] = vals + (tag2,)
         for sid in list(self._activity_search_iids.keys()):
             if sid not in current_sids:
                 iid = self._activity_search_iids.pop(sid)
@@ -3943,12 +4088,104 @@ class MacetaApp(tk.Tk):
                         )
                         self._activity_dl_iids[key] = iid
                         self._activity_dl_vals[iid] = vals
+        if self.show_all_dl_var.get():
+            current_keys |= self._render_missing_downloads(searches)
         for key in list(self._activity_dl_iids.keys()):
             if key not in current_keys:
                 iid = self._activity_dl_iids.pop(key)
                 self._activity_dl_vals.pop(iid, None)
                 if self.dl_tree.exists(iid):
                     self.dl_tree.delete(iid)
+        self._update_activity_stats(searches, downloads)
+
+    def _render_missing_downloads(self, searches) -> set:
+        """Añade una fila por cada búsqueda que no llegó a descargar nada,
+        diciendo por qué. Sin esto, una búsqueda sin resultados
+        simplemente no aparecía y parecía que se había perdido."""
+        con_descarga = {
+            n for n in (self._dl_num.get(k) for k in self._dl_num) if n}
+        for iid in self.dl_tree.get_children(""):
+            num = self._extract_num(self.dl_tree.set(iid, "num"))
+            if num:
+                con_descarga.add(num)
+        keys = set()
+        for s in searches:
+            sid = s.get("id")
+            n = self._search_num.get(sid)
+            if not n or n in con_descarga:
+                continue
+            state = str(s.get("state", ""))
+            rc = s.get("responseCount") or 0
+            fc = s.get("fileCount") or 0
+            if "Completed" not in state:
+                motivo = "buscando…"
+            elif rc == 0:
+                motivo = "— sin resultados"
+            elif self._search_usable.get(sid) == 0 and fc:
+                motivo = f"— {fc} ficheros, ninguno pasa el filtro"
+            else:
+                motivo = "— sin descarga"
+            key = ("virtual", n)
+            keys.add(key)
+            vals = (f"#{n}", s.get("searchText", "?"), "—", motivo,
+                    "", "", "")
+            iid = self._activity_dl_iids.get(key)
+            if iid and self.dl_tree.exists(iid):
+                if self._activity_dl_vals.get(iid) != vals:
+                    self.dl_tree.item(iid, values=vals)
+                    self._activity_dl_vals[iid] = vals
+            else:
+                iid = self.dl_tree.insert("", tk.END, values=vals,
+                                          tags=("virtual",))
+                self._activity_dl_iids[key] = iid
+                self._activity_dl_vals[iid] = vals
+        return keys
+
+    def _update_activity_stats(self, searches, downloads):
+        """Resumen de la pestaña, al estilo de los chips de Biblioteca."""
+        total_s = len(searches)
+        buscando = sum(1 for s in searches
+                       if "Completed" not in str(s.get("state", "")))
+        con_resp = sum(1 for s in searches if (s.get("responseCount") or 0))
+        sin_nada = sum(1 for s in searches
+                       if "Completed" in str(s.get("state", ""))
+                       and not (s.get("responseCount") or 0))
+        filtradas = sum(1 for s in searches
+                        if self._search_usable.get(s.get("id")) == 0
+                        and (s.get("fileCount") or 0))
+
+        def pct(n, t):
+            return f" ({100 * n / t:.0f}%)" if t else ""
+
+        if total_s:
+            self.act_search_stats.set(
+                f"🔎 {total_s} búsquedas · ⏳ {buscando} en curso · "
+                f"✅ {con_resp} con respuesta{pct(con_resp, total_s)} · "
+                f"🚫 {sin_nada} sin nada · ⚠ {filtradas} filtradas")
+        else:
+            self.act_search_stats.set("🔎 sin búsquedas")
+
+        bajando = encolados = hechas = fallidas = total_d = 0
+        for ug in downloads:
+            for d in (ug.get("directories") or []):
+                for f in (d.get("files") or []):
+                    st = str(f.get("state", ""))
+                    total_d += 1
+                    if "InProgress" in st:
+                        bajando += 1
+                    elif "Queued" in st or "Requested" in st:
+                        encolados += 1
+                    elif "Succeeded" in st:
+                        hechas += 1
+                    elif "Completed" in st:
+                        fallidas += 1
+        if total_d:
+            self.act_dl_stats.set(
+                f"📥 {total_d} descargas · ⬇ {bajando} bajando · "
+                f"⏸ {encolados} en cola · ✅ {hechas}{pct(hechas, total_d)} · "
+                f"✗ {fallidas} caídas")
+        else:
+            self.act_dl_stats.set("📥 sin descargas")
 
     def _activity_reconcile(self, downloads, local_lookup=None):
         """Cuando una descarga completa, actualiza el estado en Biblioteca
@@ -3974,6 +4211,9 @@ class MacetaApp(tk.Tk):
                         self._set_slsk_status(orig_iid, f"✗ {state}")
                         self._release_active(orig_iid)
                         self.finalized_dl_keys.add(key)
+                        if ("Cancelled" in state or "Rejected" in state) \
+                                and key not in self._self_cancelled:
+                            self._record_peer_cancel(username)
                     elif "Completed, Succeeded" in state or state == "Completed":
                         local = local_lookup.get(key)
                         if local is None:
@@ -4096,6 +4336,35 @@ class MacetaApp(tk.Tk):
                 return p
         return None
 
+    def _record_peer_cancel(self, username: str):
+        """Un peer nos ha tumbado una descarga que no cancelamos nosotros.
+        A la N-ésima dentro de la ventana, deja de usarse."""
+        if not username or username in self.banned_peers:
+            return
+        limit = max(1, int(self._num(self.ban_strikes_var, 3)))
+        window = max(1, int(self._num(self.ban_window_min_var, 60))) * 60
+        now = time.time()
+        hits = [t for t in self.peer_strikes.get(username, [])
+                if now - t < window]
+        hits.append(now)
+        self.peer_strikes[username] = hits
+        log.info("peer %s: %d cancelación(es) en %d min",
+                 username, len(hits), window // 60)
+        if len(hits) >= limit:
+            self.banned_peers.append(username)
+            self.peer_strikes.pop(username, None)
+            log.warning("peer %s baneado tras %d cancelaciones",
+                        username, len(hits))
+            self.status.set(
+                f"🚫 {username} baneado: {len(hits)} descargas canceladas "
+                f"en {window // 60} min")
+        self._save_current_state()
+
+    def _mark_self_cancelled(self, username: str, filename: str):
+        """Apunta que la cancelación es nuestra, para no culpar al peer."""
+        if username and filename:
+            self._self_cancelled.add((username, (filename or "").lower()))
+
     def _release_active(self, iid):
         self.active_by_iid.pop(iid, None)
 
@@ -4153,8 +4422,10 @@ class MacetaApp(tk.Tk):
         pairs = []
         for iid in self.dl_tree.selection():
             tags = self.dl_tree.item(iid, "tags")
-            if len(tags) >= 2:
+            if len(tags) >= 2 and tags[0] != "virtual":
                 pairs.append((tags[0], tags[1]))
+                self._mark_self_cancelled(tags[0],
+                                          self.dl_tree.set(iid, "file"))
         if not pairs:
             return
 
@@ -4270,6 +4541,19 @@ class MacetaApp(tk.Tk):
         self._run_bg("clear_all", worker,
                      on_status="Limpiado todo: {res[0]} búsq., {res[1]} desc.")
 
+    def _on_show_all_dl(self):
+        """Al apagarlo hay que barrer las filas fantasma a mano: el
+        render solo limpia lo que él mismo dejó de generar."""
+        self._save_current_state()
+        if not self.show_all_dl_var.get():
+            for key in [k for k in self._activity_dl_iids
+                        if isinstance(k, tuple) and k[0] == "virtual"]:
+                iid = self._activity_dl_iids.pop(key)
+                self._activity_dl_vals.pop(iid, None)
+                if self.dl_tree.exists(iid):
+                    self.dl_tree.delete(iid)
+        self._activity_tick()
+
     def on_clear_dl_list(self):
         """Vacía la lista de descargas de slskd: quita todas las entradas
         terminadas (completadas, canceladas, erroreadas) y deja las que
@@ -4364,6 +4648,7 @@ class MacetaApp(tk.Tk):
             self._requery_attempts[query] = attempts
             force = attempts >= max_tries
             try:
+                self._mark_self_cancelled(username, fn)
                 client.cancel_download(username, f.get("id"), remove=True)
             except Exception as e:
                 log.warning("cancel en rebúsqueda falló: %s", e)
@@ -4640,6 +4925,7 @@ class MacetaApp(tk.Tk):
             )
             items.append((vals, (resp, f), bool(why)))
 
+        self._search_usable[sid] = n_ok
         self.after(0, self._populate_results, sid, items, n_ok, reasons)
 
     def _populate_results(self, sid, items, n_ok=None, reasons=None):
@@ -4770,6 +5056,7 @@ class MacetaApp(tk.Tk):
                     remote_fn_lc = (f.get("filename") or "").lower()
                     if self._dl_num.get((username, remote_fn_lc)) == num:
                         try:
+                            self._mark_self_cancelled(username, remote_fn_lc)
                             client.cancel_download(
                                 username, f.get("id"), remove=True
                             )
@@ -5014,26 +5301,70 @@ class MacetaApp(tk.Tk):
             geo = self.geometry()
         except Exception:
             return
-        sash = {}
+        # Se parte de lo ya guardado: un panel cuya pestaña no está a la
+        # vista no se puede medir, y machacarlo con basura lo colapsaría
+        # en el próximo arranque.
+        sash = dict(self._user_state.get("sash") or {})
         for name, pane in self._panes().items():
-            pos = []
-            i = 0
-            while True:
-                try:
-                    pos.append(pane.sashpos(i))
-                except Exception:
-                    break
-                i += 1
-            # Un panel de una pestaña que todavía no se ha mostrado
-            # devuelve 0: guardarlo colapsaría el divisor al reabrir.
-            if any(p > 0 for p in pos):
-                sash[name] = pos
+            measured = self._measure_sashes(pane)
+            if measured:
+                sash[name] = measured
         try:
             tab = self.notebook.index(self.notebook.select())
         except Exception:
             tab = 0
         save_user_state({"window_geometry": geo, "active_tab": int(tab),
                          "sash": sash})
+
+    def _on_tab_layout(self, _event=None):
+        """Los divisores de una pestaña solo se pueden colocar cuando se
+        muestra: al cambiar de pestaña se aplican los suyos."""
+        self.after(120, self._apply_saved_sashes)
+        self._schedule_layout_save()
+
+    def _apply_saved_sashes(self):
+        saved = self._user_state.get("sash") or {}
+        self.update_idletasks()
+        for name, pane in self._panes().items():
+            horiz = str(pane.cget("orient")).startswith("horiz")
+            span = pane.winfo_width() if horiz else pane.winfo_height()
+            if span < 3 * self.MIN_PANE_PX:
+                continue
+            for i, pos in enumerate(saved.get(name) or []):
+                pos = int(pos)
+                if pos < self.MIN_PANE_PX or pos > span - self.MIN_PANE_PX:
+                    continue
+                try:
+                    pane.sashpos(i, pos)
+                except Exception:
+                    pass
+
+    MIN_PANE_PX = 60   # por debajo de esto un panel queda inservible
+
+    def _measure_sashes(self, pane):
+        """Posiciones de los divisores, o None si el panel todavía no
+        está dibujado o el valor dejaría un lado aplastado.
+
+        Un ttk.PanedWindow de una pestaña que nunca se ha mostrado
+        devuelve posiciones sin sentido (0, o un par de píxeles), y
+        guardarlas es lo que dejaba Búsquedas y Resultados invisibles."""
+        horiz = str(pane.cget("orient")).startswith("horiz")
+        span = pane.winfo_width() if horiz else pane.winfo_height()
+        if span < 3 * self.MIN_PANE_PX:
+            return None
+        pos, i = [], 0
+        while True:
+            try:
+                pos.append(int(pane.sashpos(i)))
+            except Exception:
+                break
+            i += 1
+        if not pos:
+            return None
+        for p in pos:
+            if p < self.MIN_PANE_PX or p > span - self.MIN_PANE_PX:
+                return None
+        return pos
 
     def _schedule_layout_save(self, _event=None):
         """<Configure> dispara en cada píxel de un arrastre: agrupamos."""
@@ -5067,17 +5398,24 @@ class MacetaApp(tk.Tk):
         except Exception:
             pass
         saved = us.get("sash") or {}
+        self.update_idletasks()
         for name, pane in self._panes().items():
+            horiz = str(pane.cget("orient")).startswith("horiz")
+            span = pane.winfo_width() if horiz else pane.winfo_height()
+            if span < 3 * self.MIN_PANE_PX:
+                continue   # pestaña no visible: se aplicará cuando se abra
             for i, pos in enumerate(saved.get(name) or []):
-                if int(pos) <= 0:
+                pos = int(pos)
+                # Nunca restaurar algo que deje un lado aplastado.
+                if pos < self.MIN_PANE_PX or pos > span - self.MIN_PANE_PX:
                     continue
                 try:
-                    pane.sashpos(i, int(pos))
+                    pane.sashpos(i, pos)
                 except Exception:
                     pass
         self.bind("<Configure>", self._schedule_layout_save, add="+")
         self.notebook.bind("<<NotebookTabChanged>>",
-                           self._schedule_layout_save, add="+")
+                           self._on_tab_layout, add="+")
 
     # ---------- Carpetas recientes ----------
 
@@ -5534,22 +5872,45 @@ class MacetaApp(tk.Tk):
         Devuelve (ok, text)."""
         if not query:
             return False, "sin query"
-        info = client.start_search(query)
-        sid = info.get("id")
-        if not sid:
-            return False, "no search id"
-        # Asignar #N a esta búsqueda (thread-safe)
-        with self._num_lock:
-            self._num_counter += 1
-            n = self._num_counter
-            self._search_num[sid] = n
-            if link_iid:
-                self._search_link_iid[sid] = link_iid
-        # Sin max_wait a mano: 25 s era menos que el searchTimeout de 30 s
-        # que le pedimos a slskd, así que nos rendíamos antes de que la
-        # búsqueda pudiera cerrarse sola.
-        client.wait_for_search(sid)
-        responses = client.get_responses(sid)
+
+        attempts = [query]
+        if self.smart_search_var.get():
+            attempts += query_fallbacks(query)
+
+        responses, sid, used_query, variant = [], None, query, 0
+        for i, q in enumerate(attempts):
+            info = client.start_search(q)
+            sid = info.get("id")
+            if not sid:
+                return False, "no search id"
+            # Asignar #N a esta búsqueda (thread-safe)
+            with self._num_lock:
+                self._num_counter += 1
+                n = self._num_counter
+                self._search_num[sid] = n
+                if link_iid:
+                    self._search_link_iid[sid] = link_iid
+            if i:
+                self.after(0, self._set_slsk_status, link_iid,
+                           f"probando «{q}»…") if link_iid else None
+                log.info("sin respuestas, pruebo variante %d: '%s'", i, q)
+            # Sin max_wait a mano: 25 s era menos que el searchTimeout de
+            # 30 s que le pedimos a slskd, así que nos rendíamos antes de
+            # que la búsqueda pudiera cerrarse sola.
+            client.wait_for_search(sid)
+            responses = client.get_responses(sid)
+            if responses:
+                used_query, variant = q, i
+                break
+        query = used_query
+        if sid:
+            self._search_usable[sid] = sum(
+                1 for r in (responses or [])
+                if not peer_rejection_reason(r, self._search_filters())
+                for f in (r.get("files") or [])
+                if not rejection_reason(f, self._min_bitrate_for(
+                    self.rows_by_iid.get(link_iid) if link_iid else None),
+                    self._search_filters()))
         pick = None
         ref_row = self.rows_by_iid.get(link_iid) if link_iid else None
         min_br = self._min_bitrate_for(ref_row)
@@ -5585,6 +5946,9 @@ class MacetaApp(tk.Tk):
         if not pick:
             n_files = sum(len(r.get("files") or []) for r in responses or [])
             if not responses:
+                if len(attempts) > 1:
+                    return False, (f"nadie respondió "
+                                   f"({len(attempts)} variantes probadas)")
                 return False, "nadie respondió (query demasiado específica?)"
             return False, (f"{n_files} ficheros, ninguno pasa el filtro "
                            f"(min {min_br} kbps)")
@@ -5616,6 +5980,8 @@ class MacetaApp(tk.Tk):
         ext = _file_ext(f)
         br = f.get("bitRate")
         tag = "FLAC" if ext == "flac" else (f"{br}kbps" if br else ext.upper())
+        if variant:
+            auto_note += f" · variante {variant}"
         return True, f"↓ {tag} de {resp['username']}{auto_note}"
 
     def _slsk_one(self, client, iid, row):
@@ -5695,22 +6061,27 @@ class WhatsNewDialog(tk.Toplevel):
         ttk.Label(
             top,
             text="Esto es lo que ha cambiado desde tu versión anterior:",
-            foreground="#555",
+            foreground="#9a9a9a",
         ).pack(anchor="w", pady=(4, 0))
 
         body = ttk.Frame(self, padding=(12, 8))
         body.pack(fill=tk.BOTH, expand=True)
         text_frame = ttk.Frame(body)
         text_frame.pack(fill=tk.BOTH, expand=True)
+        # Sin foreground explícito, en modo oscuro macOS pintaba las
+        # letras en blanco sobre el fondo claro: ilegible.
         txt = tk.Text(text_frame, wrap="word", padx=8, pady=8,
-                      background="#fafafa", relief="flat",
+                      background="#141414", foreground="#ededed",
+                      insertbackground="#ededed",
+                      selectbackground="#3874d4", selectforeground="#ffffff",
+                      highlightthickness=0, relief="flat",
                       font=("TkDefaultFont", 11))
         vsb = ttk.Scrollbar(text_frame, orient="vertical", command=txt.yview)
         txt.configure(yscrollcommand=vsb.set)
         txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt.tag_configure("h2", font=("TkDefaultFont", 12, "bold"),
-                          spacing1=8, spacing3=4)
+                          foreground="#8ab4f8", spacing1=8, spacing3=4)
         for line in markdown_text.splitlines():
             if line.startswith("## "):
                 txt.insert(tk.END, line[3:] + "\n", "h2")
@@ -6199,10 +6570,12 @@ class ManualSubstituteDialog(tk.Toplevel):
         cand_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
         wrap = ttk.Frame(cand_frame)
         wrap.pack(fill=tk.BOTH, expand=True)
-        cols = ("ext", "size", "duration")
+        cols = ("match", "ext", "size", "duration")
         self.tree = ttk.Treeview(
             wrap, columns=cols, show="tree headings", selectmode="browse",
         )
+        self.tree.tag_configure("linked", foreground="#1a7f37")
+        self.tree.tag_configure("match", foreground="#1a7f37")
         self._sort_state = {}
         def _make_sorter(col):
             def _cb():
@@ -6211,8 +6584,9 @@ class ManualSubstituteDialog(tk.Toplevel):
                 self._sort_state[col] = not desc
             return _cb
         self.tree.heading("#0", text="Fichero", command=_make_sorter("#0"))
-        self.tree.column("#0", width=460, anchor=tk.W)
-        for c, (t, w) in [("ext", ("Ext", 60)),
+        self.tree.column("#0", width=420, anchor=tk.W)
+        for c, (t, w) in [("match", ("Parecido", 85)),
+                          ("ext", ("Ext", 60)),
                           ("size", ("MB", 80)),
                           ("duration", ("Duración", 90))]:
             self.tree.heading(c, text=t, command=_make_sorter(c))
@@ -6223,21 +6597,45 @@ class ManualSubstituteDialog(tk.Toplevel):
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
         self._paths = {}  # iid -> Path
-        for p in sorted(DOWNLOADS_DIR.rglob("*")):
-            if not p.is_file():
+        # Primero las que se parecen al original: con 40 descargas en la
+        # carpeta, buscar a ojo la que toca era lo pesado de este diálogo.
+        orig_stem = Path(row["name"]).stem
+        orig_path = str(Path(row["path"]))
+        cands = []
+        for p in DOWNLOADS_DIR.rglob("*"):
+            if not p.is_file() or p.suffix.lower() not in SUPPORTED_EXTS:
                 continue
-            if p.suffix.lower() not in SUPPORTED_EXTS:
-                continue
+            link = get_download_link(p.name)
+            linked = bool(link.get("original_path")) and \
+                str(Path(link["original_path"])) == orig_path
+            cands.append((linked, name_similarity(orig_stem, p.name), p))
+        cands.sort(key=lambda t: (-t[0], -t[1], str(t[2]).lower()))
+
+        best = linked_iid = None
+        for linked, sim, p in cands:
             meta = get_metadata(str(p))
             size_mb = p.stat().st_size / 1024 / 1024
             dur = meta.get("duration_s") or 0
             dur_str = f"{int(dur)//60}:{int(dur)%60:02d}" if dur else "?"
+            tags = ("linked",) if linked else (
+                ("match",) if sim >= 0.75 else ())
             iid = self.tree.insert(
                 "", tk.END, text=str(p.relative_to(DOWNLOADS_DIR)),
-                values=(p.suffix.lstrip(".").upper(),
+                values=("⬇ enlazada" if linked else f"{sim * 100:.0f}%",
+                        p.suffix.lstrip(".").upper(),
                         f"{size_mb:.1f}", dur_str),
+                tags=tags,
             )
             self._paths[iid] = p
+            if linked and linked_iid is None:
+                linked_iid = iid
+            if best is None and sim >= 0.75:
+                best = iid
+        target = linked_iid or best
+        if target:
+            self.tree.selection_set(target)
+            self.tree.focus(target)
+            self.tree.see(target)
 
         btns = ttk.Frame(self, padding=8)
         btns.pack(fill=tk.X, side=tk.BOTTOM)
@@ -6386,6 +6784,22 @@ OPTION_TABS = [
      {"src": "app", "key": "search_max_queue", "kind": "int",
       "min": 0, "max": 500, "step": 5,
       "label": "Cola máxima aceptada", "hint": "0 = sin límite."},
+     {"src": "app", "key": "smart_search_var", "kind": "bool",
+      "label": "Reintentar con menos palabras si no hay respuestas",
+      "hint": "Si la búsqueda exacta no devuelve nada, prueba variantes "
+              "más cortas: quita relleno y se queda con lo distintivo."},
+     {"src": "app", "key": "ban_strikes_var", "kind": "int",
+      "min": 1, "max": 20, "step": 1,
+      "label": "Cancelaciones para banear a un peer",
+      "hint": "Si un usuario nos tumba tantas descargas dentro de la "
+              "ventana, deja de usarse al elegir resultados."},
+     {"src": "app", "key": "ban_window_min_var", "kind": "int",
+      "min": 5, "max": 1440, "step": 15,
+      "label": "Ventana del baneo (minutos)",
+      "hint": "Las cancelaciones más viejas que esto se olvidan."},
+     {"kind": "action", "label": "Baneados", "button": "🚫 Editar lista…",
+      "cmd": "banned",
+      "hint": "Ver, quitar o añadir usuarios a mano."},
      {"src": "app", "key": "search_format_vars", "kind": "formats",
       "label": "Formatos aceptados", "hint": ""},
      {"src": "app", "key": "results_limit", "kind": "int",
@@ -6606,6 +7020,9 @@ class OptionsDialog(tk.Toplevel):
         except Exception as e:
             self._result_var.set(f"✗ {e}")
 
+    def _do_banned(self):
+        BannedPeersDialog(self.app)
+
     def _do_colors(self):
         ColorEditorDialog(self.app)
 
@@ -6683,6 +7100,104 @@ COLOR_ESSENTIALS = [
     ("verdict_FAKE",     "Texto FAKE"),
     ("verdict_LOSSLESS", "Texto LOSSLESS"),
 ]
+
+
+class BannedPeersDialog(tk.Toplevel):
+    """Lista de usuarios de Soulseek que Maceta ya no usa, editable.
+
+    Se llena sola cuando un peer nos cancela varias descargas seguidas,
+    pero la última palabra es del usuario: aquí se quita o se añade a
+    mano quien haga falta."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Usuarios baneados")
+        self.geometry("520x460")
+        self.transient(app)
+
+        ttk.Label(
+            self, padding=(12, 10, 12, 4), justify="left", wraplength=480,
+            text="Estos usuarios no se eligen al buscar. Se añaden solos "
+                 "cuando cancelan varias descargas seguidas, y puedes "
+                 "quitarlos o añadir otros a mano.",
+        ).pack(fill=tk.X)
+
+        box = ttk.Frame(self, padding=(12, 0))
+        box.pack(fill=tk.BOTH, expand=True)
+        self.listbox = tk.Listbox(box, selectmode=tk.EXTENDED)
+        vsb = ttk.Scrollbar(box, orient="vertical",
+                            command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=vsb.set)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        add = ttk.Frame(self, padding=(12, 8))
+        add.pack(fill=tk.X)
+        self.new_var = tk.StringVar()
+        entry = ttk.Entry(add, textvariable=self.new_var)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        entry.bind("<Return>", lambda _e: self._add())
+        ttk.Button(add, text="Añadir", command=self._add).pack(
+            side=tk.LEFT, padx=6)
+
+        btns = ttk.Frame(self, padding=(12, 0, 12, 12))
+        btns.pack(fill=tk.X)
+        ttk.Button(btns, text="Quitar seleccionados",
+                   command=self._remove).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Vaciar lista",
+                   command=self._clear).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="Cerrar",
+                   command=self.destroy).pack(side=tk.RIGHT)
+
+        self.status_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.status_var, padding=(12, 0, 12, 8),
+                  foreground="#777").pack(fill=tk.X)
+        self._refresh()
+
+    def _refresh(self):
+        self.listbox.delete(0, tk.END)
+        for u in sorted(self.app.banned_peers, key=str.lower):
+            self.listbox.insert(tk.END, u)
+        pend = {u: len(v) for u, v in (self.app.peer_strikes or {}).items()
+                if v}
+        extra = ""
+        if pend:
+            top = sorted(pend.items(), key=lambda kv: -kv[1])[:3]
+            extra = " · con avisos: " + ", ".join(
+                f"{u} ({n})" for u, n in top)
+        self.status_var.set(f"{len(self.app.banned_peers)} baneado(s){extra}")
+
+    def _add(self):
+        u = self.new_var.get().strip()
+        if u and u not in self.app.banned_peers:
+            self.app.banned_peers.append(u)
+            self.app._save_current_state()
+        self.new_var.set("")
+        self._refresh()
+
+    def _remove(self):
+        for i in reversed(self.listbox.curselection()):
+            u = self.listbox.get(i)
+            if u in self.app.banned_peers:
+                self.app.banned_peers.remove(u)
+            self.app.peer_strikes.pop(u, None)
+        self.app._save_current_state()
+        self._refresh()
+
+    def _clear(self):
+        if not self.app.banned_peers:
+            return
+        if not messagebox.askyesno(
+            "Maceta",
+            f"¿Quitar los {len(self.app.banned_peers)} usuarios de la "
+            "lista?\n\nVolverán a usarse en las búsquedas.",
+        ):
+            return
+        self.app.banned_peers.clear()
+        self.app.peer_strikes.clear()
+        self.app._save_current_state()
+        self._refresh()
 
 
 class ColorEditorDialog(tk.Toplevel):

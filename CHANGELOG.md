@@ -3,6 +3,55 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.37
+
+- **Usuarios que cancelan, fuera.** Si un peer nos tumba 3 descargas en
+  una hora (configurable), deja de usarse al elegir resultados. La lista
+  se edita a mano en **Soulseek → 🚫 Usuarios baneados…**: quitar,
+  añadir o vaciar. Las cancelaciones **nuestras** no cuentan contra el
+  peer.
+- **Búsqueda inteligente**: si la consulta exacta no devuelve nada,
+  Maceta reintenta sola con variantes más cortas — quita relleno
+  ("the", "feat", "remastered", años sueltos) y se queda con lo
+  distintivo. "21st Century Schizoid Man _ Alterd States" pasa a
+  buscarse como "21st Century Schizoid Man". El estado indica con qué
+  variante se encontró.
+- **Resumen en Actividad**, al estilo de los chips de Biblioteca:
+  cuántas búsquedas hay, cuántas en curso, cuántas con respuesta y su
+  porcentaje, cuántas sin nada y cuántas filtradas; y para descargas,
+  cuántas bajando, en cola, completadas y caídas.
+- **Las búsquedas se colorean**: en rojo las que no obtuvieron ninguna
+  respuesta, en ámbar las que respondieron pero cuyos ficheros no pasan
+  tus filtros. De un vistazo sabes si el problema es que nadie la tiene
+  o que estás pidiendo demasiada calidad.
+- **Arreglado el popup de novedades**: fondo oscuro y letras claras. Antes
+  fijaba el fondo pero no el color del texto, así que en modo oscuro
+  salía blanco sobre blanco.
+- **Botón "Mostrar todas" en Descargas**: añade una fila por cada
+  búsqueda que no llegó a descargar nada, diciendo por qué — *"#17 —
+  sin resultados"*, *"#21 — 2 ficheros, ninguno pasa el filtro"*,
+  *"buscando…"*. Antes esas búsquedas simplemente no aparecían y
+  parecía que se hubieran perdido.
+- **Sustituir manualmente ordena por parecido**: la descarga que
+  corresponde a la canción sale la primera, en verde y preseleccionada,
+  con una columna de % de parecido. Si la bajó Maceta, se marca
+  directamente como enlazada. Antes había que buscarla a ojo entre
+  todas las descargas.
+- Si slskd responde `409` porque ya hay una búsqueda igual en marcha,
+  Maceta se engancha a esa en vez de fallar con un error críptico.
+
+## 0.4.36
+
+- **ARREGLADO: la pestaña Actividad se quedaba con un solo panel.** Al
+  guardar la posición de los divisores, un panel de una pestaña que
+  todavía no se había mostrado reportaba una posición absurda, y al
+  reabrir Maceta eso aplastaba Búsquedas y Resultados. Ahora ni se
+  guardan ni se restauran posiciones que dejarían un panel por debajo de
+  60 px, y los divisores de cada pestaña se aplican al abrirla. Si ya te
+  había pasado, se arregla solo al actualizar.
+- **"Seleccionar carpeta…" abre donde estuviste**: en la carpeta en uso,
+  o en la última reciente que siga existiendo.
+
 ## 0.4.35
 
 - **Índice de análisis: no se escanea dos veces lo mismo.** Maceta guarda
