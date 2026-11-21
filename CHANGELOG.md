@@ -3,6 +3,26 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.39
+
+- **Explorador de carpetas en Biblioteca.** Apuntas a la raíz de tu
+  música y a la izquierda sale el árbol de subcarpetas con sus números:
+  temas, fakes y pendientes, sumados hacia arriba. Al seleccionar una
+  carpeta, **toda la Biblioteca trabaja sobre ella** — los chips pasan a
+  ser las estadísticas de esa carpeta.
+- **🔄 Re-escanear carpeta**: vuelve a mirar el disco y recoge lo nuevo
+  sin perder el análisis de lo que ya estaba, y quita lo que ya no
+  existe. Las carpetas cambian; ahora no hay que recargar la biblioteca
+  entera para ver lo que has añadido. También por botón derecho:
+  analizar solo lo pendiente de esa carpeta, o abrirla en el Finder.
+- **Pestaña 📊 Estadísticas**: siete secciones con todo — resumen
+  (espacio, duración total), calidad, formatos y bitrates, espectro,
+  ritmo y duración, ranking de carpetas, y artistas con frikadas: el
+  fake más descarado, el artista peor servido, posibles duplicados, la
+  canción más lenta y la más rápida, cuánta música te queda sin
+  analizar. Se calcula **en segundo plano** sobre toda la biblioteca o
+  solo sobre la carpeta seleccionada; puedes seguir trabajando mientras.
+
 ## 0.4.38
 
 - **Las búsquedas ya descargadas se ven en verde.** La tabla de

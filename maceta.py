@@ -47,7 +47,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.38"
+VERSION = "0.4.39"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -1690,6 +1690,237 @@ CHIP_DEFS = [
 ]
 
 
+def _fmt_dur_long(seconds: float) -> str:
+    """7320 -> '2 h 2 min'. Para totales de biblioteca, con días."""
+    s = int(seconds or 0)
+    d, s = divmod(s, 86400)
+    h, s = divmod(s, 3600)
+    m = s // 60
+    if d:
+        return f"{d} días {h} h {m} min"
+    if h:
+        return f"{h} h {m} min"
+    return f"{m} min"
+
+
+def _fmt_size(num_bytes: float) -> str:
+    mb = (num_bytes or 0) / 1024 / 1024
+    return f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+
+
+def compute_library_stats(rows: list) -> list:
+    """Todas las estadísticas de una biblioteca, agrupadas por secciones.
+
+    Devuelve [(título, [(etiqueta, valor, es_friki), ...]), ...]. Es
+    función pura sobre las filas ya cargadas (solo toca disco para el
+    tamaño de cada fichero), así que se puede llamar desde un hilo."""
+    total = len(rows)
+    if not total:
+        return [("Sin datos", [("No hay canciones cargadas", "—", False)])]
+
+    def pct(n):
+        return f"{n} ({100 * n / total:.0f}%)"
+
+    size_by_row, total_bytes = {}, 0
+    for r in rows:
+        try:
+            b = os.path.getsize(r["path"])
+        except OSError:
+            b = 0
+        size_by_row[r["path"]] = b
+        total_bytes += b
+    dur_total = sum(r.get("duration_s") or 0 for r in rows)
+    analizadas = [r for r in rows if r.get("analyzed")]
+    buckets = {}
+    for r in rows:
+        b = row_bucket(r)
+        buckets[b] = buckets.get(b, 0) + 1
+    carpetas = {str(Path(r["path"]).parent) for r in rows}
+
+    secciones = [("📚 Resumen", [
+        ("Canciones", str(total), False),
+        ("Carpetas", str(len(carpetas)), False),
+        ("Espacio ocupado", _fmt_size(total_bytes), False),
+        ("Duración total", _fmt_dur_long(dur_total), False),
+        ("A una canción al día, te dura",
+         f"{total / 365:.1f} años" if total >= 365
+         else f"{total} días", True),
+        ("Tamaño medio por canción",
+         _fmt_size(total_bytes / total), False),
+        ("Analizadas", pct(len(analizadas)), False),
+    ])]
+
+    # ---------- calidad ----------
+    cal = []
+    for clave, etiqueta in (("listas", "✅ Listas"), ("fakes", "❌ FAKE"),
+                            ("a_revisar", "⚠ A revisar"),
+                            ("errores", "⛔ Con error"),
+                            ("sustituidas", "⬇ Sustituidas"),
+                            ("sin_analizar", "❓ Sin analizar")):
+        cal.append((etiqueta, pct(buckets.get(clave, 0)), False))
+    fakes = [r for r in rows if r.get("verdict") == "FAKE"]
+    if fakes:
+        peso_fake = sum(size_by_row.get(r["path"], 0) for r in fakes)
+        cal.append(("Espacio malgastado en fakes", _fmt_size(peso_fake), True))
+    lossless = [r for r in rows
+                if (r.get("codec") or "").upper() in ("FLAC", "WAV")]
+    if lossless:
+        peso_ll = sum(size_by_row.get(r["path"], 0) for r in lossless)
+        cal.append(("Lossless", pct(len(lossless)), False))
+        cal.append(("Si pasaras el lossless a MP3 320 ahorrarías",
+                    _fmt_size(max(0, peso_ll - sum(
+                        (r.get("duration_s") or 0) * 40000
+                        for r in lossless))), True))
+    secciones.append(("🎯 Calidad", cal))
+
+    # ---------- formatos y bitrates ----------
+    codecs = {}
+    for r in rows:
+        c = (r.get("codec") or "?").upper()
+        codecs[c] = codecs.get(c, 0) + 1
+    fmt = [(c, pct(n), False)
+           for c, n in sorted(codecs.items(), key=lambda kv: -kv[1])]
+    brs = [r.get("bitrate_kbps") or 0 for r in rows if r.get("bitrate_kbps")]
+    if brs:
+        fmt.append(("Bitrate medio declarado",
+                    f"{sum(brs) / len(brs):.0f} kbps", False))
+        tramos = {"320+": 0, "256-319": 0, "192-255": 0, "<192": 0}
+        for b in brs:
+            k = ("320+" if b >= 320 else "256-319" if b >= 256
+                 else "192-255" if b >= 192 else "<192")
+            tramos[k] += 1
+        for k, n in tramos.items():
+            fmt.append((f"Declaran {k} kbps", pct(n), False))
+    srs = {}
+    for r in rows:
+        s = r.get("sample_rate")
+        if s:
+            srs[s] = srs.get(s, 0) + 1
+    for s, n in sorted(srs.items(), key=lambda kv: -kv[1])[:4]:
+        fmt.append((f"{s} Hz", pct(n), False))
+    secciones.append(("🎛 Formatos", fmt))
+
+    # ---------- espectro ----------
+    cortes = [r["cutoff_hz"] for r in rows if r.get("cutoff_hz")]
+    if cortes:
+        esp = [("Corte medio", f"{sum(cortes) / len(cortes):.0f} Hz", False)]
+        tramos = {"≥ 19 kHz (excelente)": 0, "16–19 kHz (bien)": 0,
+                  "14–16 kHz (sospechoso)": 0, "< 14 kHz (malo)": 0}
+        for c in cortes:
+            k = ("≥ 19 kHz (excelente)" if c >= 19000
+                 else "16–19 kHz (bien)" if c >= 16000
+                 else "14–16 kHz (sospechoso)" if c >= 14000
+                 else "< 14 kHz (malo)")
+            tramos[k] += 1
+        for k, n in tramos.items():
+            esp.append((k, f"{n} ({100 * n / len(cortes):.0f}% de analizadas)",
+                        False))
+        peor = min((r for r in rows if r.get("cutoff_hz")),
+                   key=lambda r: r["cutoff_hz"])
+        esp.append(("El fake más descarado",
+                    f"{peor['name'][:44]} — {int(peor['cutoff_hz'])} Hz "
+                    f"declarando {peor.get('bitrate_kbps') or '?'} kbps", True))
+        secciones.append(("📈 Espectro", esp))
+
+    # ---------- ritmo y duración ----------
+    bpms = [r["bpm"] for r in rows if r.get("bpm")]
+    ritmo = []
+    if bpms:
+        ritmo.append(("BPM medio", f"{sum(bpms) / len(bpms):.0f}", False))
+        lenta = min((r for r in rows if r.get("bpm")), key=lambda r: r["bpm"])
+        rapida = max((r for r in rows if r.get("bpm")), key=lambda r: r["bpm"])
+        ritmo.append(("La más lenta",
+                      f"{lenta['name'][:44]} — {lenta['bpm']:.0f} BPM", True))
+        ritmo.append(("La más rápida",
+                      f"{rapida['name'][:44]} — {rapida['bpm']:.0f} BPM", True))
+        lentas = sum(1 for b in bpms if b < 90)
+        medias = sum(1 for b in bpms if 90 <= b < 140)
+        ritmo.append(("Lentas (< 90 BPM)", str(lentas), False))
+        ritmo.append(("Medias (90–140)", str(medias), False))
+        ritmo.append(("Rápidas (> 140)", str(len(bpms) - lentas - medias),
+                      False))
+    con_dur = [r for r in rows if r.get("duration_s")]
+    if con_dur:
+        larga = max(con_dur, key=lambda r: r["duration_s"])
+        corta = min(con_dur, key=lambda r: r["duration_s"])
+        ritmo.append(("Duración media",
+                      _fmt_dur_long(dur_total / len(con_dur)), False))
+        ritmo.append(("La más larga",
+                      f"{larga['name'][:44]} — "
+                      f"{_fmt_dur_long(larga['duration_s'])}", True))
+        ritmo.append(("La más corta",
+                      f"{corta['name'][:44]} — "
+                      f"{_fmt_dur_long(corta['duration_s'])}", True))
+    if ritmo:
+        secciones.append(("🥁 Ritmo y duración", ritmo))
+
+    # ---------- carpetas ----------
+    por_carpeta = {}
+    for r in rows:
+        d = str(Path(r["path"]).parent)
+        e = por_carpeta.setdefault(d, [0, 0])
+        e[0] += 1
+        e[1] += r.get("verdict") == "FAKE"
+    top = sorted(por_carpeta.items(), key=lambda kv: -kv[1][0])[:5]
+    carp = [(f"📁 {Path(d).name or d}", f"{n} temas, {f} fakes", False)
+            for d, (n, f) in top]
+    peores = [(d, v) for d, v in por_carpeta.items() if v[0] >= 5]
+    peores.sort(key=lambda kv: -(kv[1][1] / kv[1][0]))
+    if peores:
+        d, (n, f) = peores[0]
+        carp.append(("La carpeta con más fakes (de 5 temas o más)",
+                     f"{Path(d).name} — {f} de {n} ({100 * f / n:.0f}%)",
+                     True))
+    secciones.append(("📂 Carpetas", carp))
+
+    # ---------- artistas y frikadas ----------
+    artistas, titulos = {}, {}
+    for r in rows:
+        info = parse_song_filename(Path(r["name"]).stem)
+        a = (info.get("artist") or "").strip()
+        t = (info.get("title") or "").strip().lower()
+        if a:
+            e = artistas.setdefault(a, [0, 0])
+            e[0] += 1
+            e[1] += r.get("verdict") == "FAKE"
+        if a and t:
+            titulos.setdefault(f"{a.lower()} - {t}", []).append(r["name"])
+    frik = []
+    top_a = sorted(artistas.items(), key=lambda kv: -kv[1][0])[:5]
+    for a, (n, f) in top_a:
+        frik.append((f"🎤 {a[:38]}", f"{n} temas" + (f", {f} fakes" if f else ""),
+                     False))
+    con_fakes = [(a, v) for a, v in artistas.items() if v[0] >= 3]
+    con_fakes.sort(key=lambda kv: -(kv[1][1] / kv[1][0]))
+    if con_fakes and con_fakes[0][1][1]:
+        a, (n, f) = con_fakes[0]
+        frik.append(("El artista peor servido", f"{a} — {f} de {n} fakes",
+                     True))
+    dups = {k: v for k, v in titulos.items() if len(v) > 1}
+    frik.append(("Posibles duplicados", str(len(dups)), True))
+    if dups:
+        k = max(dups, key=lambda k: len(dups[k]))
+        frik.append(("El más repetido",
+                     f"{k[:40]} — {len(dups[k])} copias", True))
+    nombre_largo = max(rows, key=lambda r: len(r["name"]))
+    frik.append(("El nombre de fichero más largo",
+                 f"{len(nombre_largo['name'])} caracteres", True))
+    letras = {}
+    for r in rows:
+        c = (r["name"][:1] or "?").upper()
+        letras[c] = letras.get(c, 0) + 1
+    if letras:
+        c, n = max(letras.items(), key=lambda kv: kv[1])
+        frik.append(("Letra inicial más común", f"{c} ({n} canciones)", True))
+    pendientes = [r for r in rows if not r.get("analyzed")]
+    if pendientes:
+        frik.append(("Música sin analizar",
+                     _fmt_dur_long(sum(r.get("duration_s") or 0
+                                       for r in pendientes)), True))
+    secciones.append(("🏆 Artistas y frikadas", frik))
+    return secciones
+
+
 def row_bucket(row: dict) -> str:
     """Clasifica una fila en uno de: sin_analizar / en_proceso /
     a_revisar / fakes / errores / sustituidas / listas. 'todas' no la
@@ -1966,7 +2197,10 @@ class MacetaApp(tk.Tk):
         self.notebook.add(activity, text="Actividad Soulseek")
         self.notebook.add(downloads, text="Descargas")
         self.notebook.add(messages, text="💬 Mensajes")
+        stats_tab = ttk.Frame(self.notebook)
+        self.notebook.add(stats_tab, text="📊 Estadísticas")
 
+        self._build_stats_tab(stats_tab)
         self._build_biblio_tab(biblio)
         self._build_activity_tab(activity)
         self._build_downloads_tab(downloads)
@@ -2712,6 +2946,17 @@ class MacetaApp(tk.Tk):
             side=tk.LEFT, fill=tk.X, expand=True, padx=8
         )
 
+        # Explorador a la izquierda, biblioteca a la derecha. Apuntas a la
+        # raíz de tu música y trabajas subcarpeta por subcarpeta.
+        self._biblio_panes = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
+        self._biblio_panes.pack(fill=tk.BOTH, expand=True)
+        left = ttk.Frame(self._biblio_panes)
+        self._biblio_panes.add(left, weight=1)
+        right = ttk.Frame(self._biblio_panes)
+        self._biblio_panes.add(right, weight=4)
+        self._build_folder_explorer(left)
+        parent = right
+
         # Chips de estado (buckets). Cada chip filtra a un subconjunto.
         self._chips_frame = ttk.Frame(parent, padding=(8, 4, 8, 0))
         self._chips_frame.pack(fill=tk.X)
@@ -2832,6 +3077,287 @@ class MacetaApp(tk.Tk):
                         command=self._update_pref_indicator
                         ).pack(side=tk.LEFT, padx=12)
 
+
+    # ---------- Pestaña de estadísticas ----------
+
+    def _build_stats_tab(self, parent):
+        top = ttk.Frame(parent, padding=(10, 10, 10, 4))
+        top.pack(fill=tk.X)
+        ttk.Button(top, text="📊 Calcular estadísticas",
+                   command=self.on_compute_stats).pack(side=tk.LEFT)
+        self.stats_scope_var = tk.StringVar(value="todo")
+        ttk.Radiobutton(top, text="Toda la biblioteca", value="todo",
+                        variable=self.stats_scope_var).pack(side=tk.LEFT,
+                                                            padx=(14, 4))
+        ttk.Radiobutton(top, text="Solo la carpeta seleccionada",
+                        value="carpeta",
+                        variable=self.stats_scope_var).pack(side=tk.LEFT)
+        self.stats_status_var = tk.StringVar(
+            value="Sin calcular todavía. Pulsa el botón: se calcula en "
+                  "segundo plano y puedes seguir trabajando.")
+        ttk.Label(parent, textvariable=self.stats_status_var,
+                  foreground="#888", padding=(10, 0, 10, 6)).pack(fill=tk.X)
+
+        wrap, self.stats_tree = make_scrollable_tree(
+            parent, columns=("valor",), show="tree headings",
+            selectmode="browse")
+        wrap.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.stats_tree.heading("#0", text="Métrica")
+        self.stats_tree.column("#0", width=420, minwidth=220, anchor=tk.W)
+        self.stats_tree.heading("valor", text="Valor")
+        self.stats_tree.column("valor", width=320, minwidth=120, anchor=tk.W)
+        self.stats_tree.tag_configure("section",
+                                      font=("TkDefaultFont", 12, "bold"))
+        self.stats_tree.tag_configure("fun", foreground="#7b4fd1")
+        self._stats_running = False
+
+    def on_compute_stats(self):
+        if self._stats_running:
+            messagebox.showinfo("Maceta", "Ya se está calculando.")
+            return
+        if not self.rows_by_iid:
+            messagebox.showinfo("Maceta", "Primero selecciona una carpeta.")
+            return
+        solo_carpeta = (self.stats_scope_var.get() == "carpeta"
+                        and self.folder_filter)
+        rows = [dict(r) for r in self.rows_by_iid.values()
+                if not solo_carpeta or self._in_folder_filter(r)]
+        ambito = (Path(self.folder_filter).name if solo_carpeta
+                  else (Path(self.folder.get()).name or "biblioteca"))
+        self._stats_running = True
+        self.stats_status_var.set(
+            f"Calculando sobre {len(rows)} canciones de «{ambito}»… "
+            "tarda un poco; puedes seguir usando Maceta y volver luego.")
+        threading.Thread(target=self._stats_worker, args=(rows, ambito),
+                         daemon=True, name="stats").start()
+
+    def _stats_worker(self, rows, ambito):
+        t0 = time.time()
+        try:
+            secciones = compute_library_stats(rows)
+        except Exception as e:
+            log.exception("estadísticas")
+            self.after(0, self._stats_failed, str(e))
+            return
+        self.after(0, self._stats_done, secciones, ambito, time.time() - t0)
+
+    def _stats_failed(self, msg):
+        self._stats_running = False
+        self.stats_status_var.set(f"No se pudieron calcular: {msg}")
+
+    def _stats_done(self, secciones, ambito, elapsed):
+        self._stats_running = False
+        self.stats_tree.delete(*self.stats_tree.get_children())
+        for titulo, filas in secciones:
+            parent = self.stats_tree.insert(
+                "", tk.END, text=titulo, values=("",), open=True,
+                tags=("section",))
+            for etiqueta, valor, friki in filas:
+                self.stats_tree.insert(
+                    parent, tk.END, text="   " + etiqueta,
+                    values=(valor,), tags=("fun",) if friki else ())
+        self.stats_status_var.set(
+            f"«{ambito}» · calculado en {elapsed:.1f} s · "
+            + time.strftime("%H:%M:%S"))
+
+    # ---------- Explorador de carpetas ----------
+
+    def _build_folder_explorer(self, parent):
+        ttk.Label(parent, text="Carpetas", padding=(8, 6, 8, 2)).pack(
+            anchor="w")
+        cols = ("n", "fake", "pend")
+        wrap, self.folder_tree = make_scrollable_tree(
+            parent, columns=cols, show="tree headings", selectmode="browse")
+        wrap.pack(fill=tk.BOTH, expand=True, padx=(8, 0), pady=(0, 4))
+        self.folder_tree.heading("#0", text="Carpeta")
+        self.folder_tree.column("#0", width=210, minwidth=120, anchor=tk.W,
+                                stretch=True)
+        for c, (t, w) in [("n", ("Temas", 60)), ("fake", ("FAKE", 60)),
+                          ("pend", ("Pdtes.", 60))]:
+            self.folder_tree.heading(c, text=t)
+            self.folder_tree.column(c, width=w, minwidth=40, anchor=tk.E,
+                                    stretch=False)
+        self.folder_tree.tag_configure("hasfake", foreground="#d04a3f")
+        self.folder_tree.tag_configure("clean", foreground="#1a7f37")
+        self.folder_tree.bind("<<TreeviewSelect>>",
+                              lambda _e: self._on_folder_selected())
+        self._folder_paths = {}      # iid -> ruta
+        self.folder_filter = ""
+
+        btns = ttk.Frame(parent, padding=(8, 0, 0, 6))
+        btns.pack(fill=tk.X)
+        ttk.Button(btns, text="🔄 Re-escanear",
+                   command=self.on_rescan_folder).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Toda la biblioteca",
+                   command=self._clear_folder_filter).pack(side=tk.LEFT,
+                                                           padx=4)
+        self._bind_context_menu(self.folder_tree, self._build_folder_context)
+
+    def _build_folder_context(self, iid):
+        path = self._folder_paths.get(iid)
+        m = tk.Menu(self, tearoff=0)
+        m.add_command(label="🔄 Re-escanear esta carpeta",
+                      command=self.on_rescan_folder,
+                      state=("normal" if path else "disabled"))
+        m.add_command(label="🔎 Analizar lo pendiente de aquí",
+                      command=self._analyze_current_folder,
+                      state=("normal" if path else "disabled"))
+        m.add_separator()
+        m.add_command(label="Mostrar en Finder",
+                      command=lambda: self._reveal_path(path),
+                      state=("normal" if path else "disabled"))
+        return m
+
+    def _reveal_path(self, path):
+        if not path:
+            return
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        elif sys.platform == "win32":
+            subprocess.Popen(["explorer", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+
+    def _folder_stats(self) -> dict:
+        """{carpeta: [total, fakes, pendientes]} con los descendientes
+        sumados hacia arriba. Sale de las filas ya cargadas, así que no
+        toca disco."""
+        root = self.folder.get()
+        stats = {}
+        for row in self.rows_by_iid.values():
+            p = Path(row.get("path") or "")
+            bucket = row_bucket(row)
+            d = p.parent
+            while True:
+                s = stats.setdefault(str(d), [0, 0, 0])
+                s[0] += 1
+                s[1] += bucket == "fakes"
+                s[2] += bucket == "sin_analizar"
+                if str(d) == root or d == d.parent:
+                    break
+                d = d.parent
+        return stats
+
+    def _rebuild_folder_tree(self):
+        """Repinta el árbol conservando lo desplegado y la selección."""
+        if not hasattr(self, "folder_tree"):
+            return
+        opened = {self._folder_paths[i]
+                  for i in self._folder_paths
+                  if self.folder_tree.exists(i)
+                  and self.folder_tree.item(i, "open")}
+        selected = self.folder_filter
+        self.folder_tree.delete(*self.folder_tree.get_children())
+        self._folder_paths.clear()
+        root = self.folder.get()
+        if not root:
+            return
+        stats = self._folder_stats()
+        hijos = {}
+        for d in stats:
+            if d == root:
+                continue
+            hijos.setdefault(str(Path(d).parent), []).append(d)
+
+        def insert(parent_iid, path, label):
+            n, fake, pend = stats.get(path, [0, 0, 0])
+            tag = "hasfake" if fake else ("clean" if n and not pend else "")
+            iid = self.folder_tree.insert(
+                parent_iid, tk.END, text=label,
+                values=(n, fake or "", pend or ""),
+                tags=(tag,) if tag else (), open=path in opened)
+            self._folder_paths[iid] = path
+            for sub_path in sorted(hijos.get(path, []), key=str.lower):
+                insert(iid, sub_path, Path(sub_path).name)
+            return iid
+
+        root_iid = insert("", root, f"📚 {Path(root).name or root}")
+        self.folder_tree.item(root_iid, open=True)
+        for iid, path in self._folder_paths.items():
+            if path == selected:
+                self.folder_tree.selection_set(iid)
+                self.folder_tree.see(iid)
+                break
+
+    def _on_folder_selected(self):
+        sel = self.folder_tree.selection()
+        path = self._folder_paths.get(sel[0]) if sel else ""
+        root = self.folder.get()
+        self.folder_filter = "" if path == root else (path or "")
+        self._apply_filter()
+
+    def _clear_folder_filter(self):
+        self.folder_filter = ""
+        if self.folder_tree.get_children():
+            self.folder_tree.selection_set(
+                self.folder_tree.get_children()[0])
+        self._apply_filter()
+
+    def _analyze_current_folder(self):
+        iids = [i for i, r in self.rows_by_iid.items()
+                if self._in_folder_filter(r) and not r.get("analyzed")]
+        if not iids:
+            messagebox.showinfo("Maceta",
+                                "No queda nada por analizar en esa carpeta.")
+            return
+        self._start_analysis(iids)
+
+    def _in_folder_filter(self, row) -> bool:
+        if not self.folder_filter:
+            return True
+        p = str(Path(row.get("path") or ""))
+        return p.startswith(self.folder_filter + os.sep)
+
+    def on_rescan_folder(self):
+        """Vuelve a mirar el disco: las carpetas cambian, y hay que poder
+        recoger lo nuevo sin perder el análisis de lo que ya estaba."""
+        target = self.folder_filter or self.folder.get()
+        if not target or not os.path.isdir(target):
+            messagebox.showinfo("Maceta", "Primero selecciona una carpeta.")
+            return
+        self.status.set(f"Re-escaneando {Path(target).name}…")
+        threading.Thread(target=self._rescan_worker, args=(target,),
+                         daemon=True, name="rescan-folder").start()
+
+    def _rescan_worker(self, target):
+        en_disco = {
+            str(p) for p in Path(target).rglob("*")
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
+        }
+        conocidos = {str(Path(r["path"])): iid
+                     for iid, r in list(self.rows_by_iid.items())
+                     if str(Path(r["path"])).startswith(str(Path(target)))}
+        nuevos = sorted(en_disco - set(conocidos))
+        perdidos = [iid for p, iid in conocidos.items() if p not in en_disco]
+        filas = []
+        for p in nuevos:
+            row = scan_row(p)
+            if self.use_index_var.get():
+                hydrate_from_index(row)
+            filas.append(row)
+        self.after(0, self._rescan_apply, filas, perdidos, target)
+
+    def _rescan_apply(self, filas, perdidos, target):
+        for iid in perdidos:
+            self.rows_by_iid.pop(iid, None)
+            if self.tree.exists(iid):
+                self.tree.delete(iid)
+        for row in filas:
+            iid = self.tree.insert(
+                "", tk.END, text=row["name"],
+                values=self._row_values(row),
+                tags=(row["verdict"] or "PENDING",))
+            self.rows_by_iid[iid] = row
+        partes = []
+        if filas:
+            partes.append(f"{len(filas)} nueva(s)")
+        if perdidos:
+            partes.append(f"{len(perdidos)} ya no está(n)")
+        self.status.set(
+            f"{Path(target).name}: " +
+            (" · ".join(partes) if partes else "sin cambios"))
+        self._rebuild_folder_tree()
+        self._apply_filter()
 
     def _build_activity_tab(self, parent):
         # ── Cabecera: caja de búsqueda por texto libre + botón cleanup ──
@@ -3456,6 +3982,16 @@ class MacetaApp(tk.Tk):
         now_hidden = set()
 
         for iid, row in self.rows_by_iid.items():
+            # Fuera de la carpeta elegida no cuenta ni para los chips:
+            # así los contadores son las estadísticas de esa carpeta.
+            if not self._in_folder_filter(row):
+                now_hidden.add(iid)
+                if iid not in prev_hidden:
+                    try:
+                        self.tree.detach(iid)
+                    except Exception:
+                        pass
+                continue
             b = row_bucket(row)
             counts[b] += 1
             counts["todas"] += 1
@@ -3495,7 +4031,11 @@ class MacetaApp(tk.Tk):
             else:
                 btn.configure(text=f"{base} ({n} · {100 * n / total:.0f}%)")
 
-        if pattern or pending_only or bucket != "todas":
+        if self.folder_filter:
+            self.status.set(
+                f"📂 {Path(self.folder_filter).name}: {total} temas · "
+                f"{visible} visibles con los filtros actuales")
+        elif pattern or pending_only or bucket != "todas":
             self.status.set(
                 f"Filtro: {visible}/{len(self.rows_by_iid)} filas visibles"
             )
@@ -3657,6 +4197,7 @@ class MacetaApp(tk.Tk):
         self.status.set(f"Listando {done}/{total}")
         # Sólo un refresh de filtro al final de cada batch
         self._schedule_filter_refresh()
+        self._schedule_folder_refresh()
 
     def _scan_done(self, n, cached=0):
         self.progress.set(0)
@@ -3832,6 +4373,15 @@ class MacetaApp(tk.Tk):
         m, sec = divmod(int(s), 60)
         return f"{m}:{sec:02d}"
 
+    def _schedule_folder_refresh(self):
+        """Repintar el árbol por cada fila analizada sería absurdo."""
+        if getattr(self, "_folder_job", None):
+            try:
+                self.after_cancel(self._folder_job)
+            except Exception:
+                pass
+        self._folder_job = self.after(700, self._rebuild_folder_tree)
+
     def _analysis_done(self):
         analyzed = [r for r in self.rows_by_iid.values() if r.get("analyzed")]
         total = len(self.rows_by_iid)
@@ -3843,6 +4393,7 @@ class MacetaApp(tk.Tk):
             f"Analizadas {n}/{total}{pct} · {fakes} fake{fake_pct}"
         )
         self.progress.set(100)
+        self._rebuild_folder_tree()
 
     # ---------- Poller de actividad Soulseek ----------
 
@@ -5306,6 +5857,7 @@ class MacetaApp(tk.Tk):
     def _panes(self) -> dict:
         """Los PanedWindow cuyos divisores merece la pena recordar."""
         return {k: w for k, w in (
+            ("biblioteca", getattr(self, "_biblio_panes", None)),
             ("mensajes", getattr(self, "_msg_panes", None)),
             ("actividad", getattr(self, "_activity_panes", None)),
             ("actividad_top", getattr(self, "_activity_top_panes", None)),
@@ -5468,6 +6020,7 @@ class MacetaApp(tk.Tk):
 
     def open_folder(self, d):
         """Escanea una carpeta y la apunta en las recientes."""
+        self.folder_filter = ""
         self.folder.set(d)
         self._push_recent_folder(d)
         self._save_current_state()
