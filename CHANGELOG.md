@@ -3,6 +3,31 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.41
+
+- **IMPORTANTE: los botones actúan sobre la carpeta que tengas abierta.**
+  Si seleccionas "Darkwave" en el explorador, *Analizar* y *Buscar fakes*
+  trabajan sobre esas canciones, no sobre las 11.000 de la biblioteca.
+  Lo mismo con un chip o un filtro de texto activo: los botones operan
+  sobre **lo que estás viendo**, y lo dicen — *"🔎 Analizar estas (3)"*,
+  *"⬇ Buscar fakes de aquí"*. Buscar fakes pide confirmación con el
+  número y el ámbito.
+- **El índice va por huella de la canción, no por ruta.** Se identifica
+  con un md5 del tamaño más los primeros y últimos 128 KB, así que si
+  mueves o renombras un fichero **sigue sabiendo que está analizado**.
+  Las entradas del índice viejo se migran solas la primera vez que se
+  tocan, sin perder nada. Cuesta ~1 ms por canción.
+- **Los números del explorador bajan en vivo** mientras analizas, en vez
+  de quedarse congelados hasta el final.
+- **El aviso de backup se puede cerrar** con la ✕. Vuelve a salir en cada
+  arranque: el aviso importa.
+- **Las columnas se ajustan al cambiar el tamaño de letra**, escalando lo
+  que haya — si estrechaste una columna a mano, sigue siendo la estrecha.
+- **Modo compacto**: Formato, Bitrate y SR se juntan en una sola celda
+  estrecha (`● 320`, `◆ FLAC·96k` — el sample rate solo aparece si no es
+  44.1 kHz). Se activa y desactiva con la casilla *Compacto*. Libera
+  unos 145 px de ancho para el nombre del fichero.
+
 ## 0.4.40
 
 - **Fuera la barra de arriba**: el botón de seleccionar carpeta y la

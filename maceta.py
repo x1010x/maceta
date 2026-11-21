@@ -16,6 +16,7 @@ o <https://www.gnu.org/licenses/> para más detalles.
 import csv
 import difflib
 import fnmatch
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -47,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.40"
+VERSION = "0.4.41"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -362,6 +363,7 @@ USER_STATE_DEFAULTS = {
     "smart_search":               True,   # reintenta con menos palabras
     "show_all_downloads":         False,  # incluir búsquedas sin descarga
     "font_sizes":                 {},     # {tabla: tamaño de letra}
+    "compact_cols":               True,   # Formato+Bitrate+SR en una celda
     # --- Umbrales que antes vivían cableados en el código ---
     "target_bitrate":             320,     # GOOD_MP3_MIN_BR
     "opportunistic_floor":        192,     # OPPORTUNISTIC_FLOOR
@@ -604,6 +606,43 @@ def substitute_file(original_path: str, downloaded_path: str) -> Path:
 DOWNLOAD_LINKS_PATH = DOWNLOADS_DIR / ".maceta_links.json"
 
 
+HASH_CHUNK = 128 * 1024       # cabecera y cola que entran en el md5
+_hash_cache = {}              # (ruta, tamaño, mtime) -> md5
+
+
+def audio_hash(path: str) -> str:
+    """md5 del contenido: tamaño + primeros y últimos 128 KB.
+
+    Identifica la canción **esté donde esté**, así que mover o renombrar
+    un fichero no pierde su análisis. No se hashea entero a propósito:
+    con 4500 canciones serían decenas de GB de lectura por escaneo, y
+    con el tamaño más los dos extremos la probabilidad de confundir dos
+    canciones distintas es despreciable."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    clave = (str(path), st.st_size, round(st.st_mtime, 3))
+    hit = _hash_cache.get(clave)
+    if hit:
+        return hit
+    h = hashlib.md5()
+    h.update(str(st.st_size).encode())
+    try:
+        with open(path, "rb") as f:
+            h.update(f.read(HASH_CHUNK))
+            if st.st_size > 2 * HASH_CHUNK:
+                f.seek(-HASH_CHUNK, os.SEEK_END)
+                h.update(f.read(HASH_CHUNK))
+    except OSError:
+        return ""
+    digest = h.hexdigest()
+    if len(_hash_cache) > 20000:
+        _hash_cache.clear()
+    _hash_cache[clave] = digest
+    return digest
+
+
 INDEX_PATH = Path.home() / ".maceta_index.json"
 _index_cache = None
 _index_lock = threading.Lock()
@@ -647,21 +686,39 @@ def _file_fingerprint(path: str) -> tuple:
         return (0, 0.0)
 
 
-def index_get(path: str) -> dict:
-    """Medidas guardadas para este fichero, o {} si no hay o están viejas.
+def _params_ok(e: dict) -> bool:
+    return (e.get("cut_db") == CUTOFF_THRESHOLD_DB
+            and e.get("secs") == ANALYSIS_MAX_SECONDS)
 
-    Se invalida si el fichero cambió (tamaño/mtime) o si se analizó con
-    otros parámetros de los que hay puestos ahora."""
-    e = load_index().get(str(path))
-    if not e:
+
+def index_get(path: str) -> dict:
+    """Medidas guardadas para esta canción, o {} si no hay o no valen.
+
+    La clave es el hash del contenido, así que encuentra el análisis
+    aunque el fichero se haya movido o renombrado. Las entradas viejas
+    (indexadas por ruta) se migran al vuelo la primera vez que se tocan,
+    para no perder lo ya analizado al actualizar."""
+    idx = load_index()
+    digest = audio_hash(path)
+    e = idx.get(digest) if digest else None
+    if e:
+        return e if _params_ok(e) else {}
+
+    vieja = idx.get(str(path))
+    if not vieja:
         return {}
     size, mtime = _file_fingerprint(path)
-    if e.get("size") != size or e.get("mtime") != mtime:
+    if vieja.get("size") != size or vieja.get("mtime") != mtime:
         return {}
-    if (e.get("cut_db") != CUTOFF_THRESHOLD_DB
-            or e.get("secs") != ANALYSIS_MAX_SECONDS):
-        return {}
-    return e
+    if digest:                      # migrar de ruta a hash
+        global _index_dirty
+        with _index_lock:
+            vieja = dict(vieja)
+            vieja["path"] = str(path)
+            idx[digest] = vieja
+            idx.pop(str(path), None)
+            _index_dirty = True
+    return vieja if _params_ok(vieja) else {}
 
 
 def index_put(row: dict) -> None:
@@ -673,9 +730,14 @@ def index_put(row: dict) -> None:
     if not path or row.get("verdict") == "ERROR":
         return
     size, mtime = _file_fingerprint(path)
+    digest = audio_hash(path)
+    if not digest:
+        return
     with _index_lock:
-        load_index()[str(path)] = {
-            "size": size, "mtime": mtime,
+        idx = load_index()
+        idx.pop(str(path), None)        # por si venía de la época de rutas
+        idx[digest] = {
+            "size": size, "mtime": mtime, "path": str(path),
             "bpm": row.get("bpm"), "cutoff_hz": row.get("cutoff_hz"),
             "cut_db": CUTOFF_THRESHOLD_DB, "secs": ANALYSIS_MAX_SECONDS,
             "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -767,6 +829,13 @@ def remove_download_link(local_filename: str) -> None:
     if base in links:
         links.pop(base, None)
         save_download_links(links)
+
+
+def index_stats() -> tuple:
+    """(entradas, cuántas siguen siendo del formato viejo por ruta)."""
+    idx = load_index()
+    viejas = sum(1 for k in idx if os.sep in k)
+    return len(idx), viejas
 
 
 def prune_download_links() -> None:
@@ -1959,6 +2028,26 @@ def row_bucket(row: dict) -> str:
     return "listas"
 
 
+def tech_badge(row: dict) -> str:
+    """Formato + bitrate + sample rate en una sola celda estrecha.
+
+    `◆ FLAC` lossless · `● 320` un MP3 · el sample rate solo se escribe
+    cuando NO es 44.1 kHz, que es el caso normal y no aporta nada. Tres
+    columnas de 230 px pasan a una de 85."""
+    codec = (row.get("codec") or "?").upper()
+    br = row.get("bitrate_kbps")
+    sr = row.get("sample_rate")
+    if codec in ("FLAC", "WAV"):
+        base = f"◆ {codec}"
+    elif codec == "MP3":
+        base = f"● {br}" if br else "● MP3"
+    else:
+        base = f"● {codec}"
+    if sr and sr != 44100:
+        base += f"·{sr // 1000}k"
+    return base
+
+
 def display_verdict(row: dict) -> str:
     """Texto enriquecido para la columna 'Calidad'. Prioriza el resultado
     de acciones (sustituido/convertido/descargando) sobre el veredicto
@@ -2097,6 +2186,7 @@ class MacetaApp(tk.Tk):
         self.ban_window_min_var = tk.IntVar(value=us["ban_window_min"])
         self.smart_search_var = tk.BooleanVar(value=us["smart_search"])
         self.show_all_dl_var = tk.BooleanVar(value=us["show_all_downloads"])
+        self.compact_cols_var = tk.BooleanVar(value=us["compact_cols"])
         self.font_sizes = dict(us.get("font_sizes") or {})
         self._font_keys = {}
         # Descargas que hemos cancelado nosotros: no cuentan como falta
@@ -2175,8 +2265,14 @@ class MacetaApp(tk.Tk):
             font=("TkDefaultFont", 10, "bold"),
             wraplength=1000, justify="left",
         )
-        banner_label.pack(fill=tk.X)
-        self._themed_widgets["banner"] = [banner, banner_label]
+        banner_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # Se puede cerrar, pero vuelve en cada arranque: el aviso importa
+        # y no se guarda ningún "no volver a mostrar".
+        banner_close = tk.Label(banner, text="✕", cursor="pointinghand",
+                                font=("TkDefaultFont", 12, "bold"))
+        banner_close.pack(side=tk.RIGHT, padx=(8, 2))
+        banner_close.bind("<Button-1>", lambda _e: banner.pack_forget())
+        self._themed_widgets["banner"] = [banner, banner_label, banner_close]
 
         # Barra de estado abajo — siempre visible
         statusbar = ttk.Frame(self, padding=(8, 6), relief="sunken", borderwidth=1)
@@ -2989,14 +3085,19 @@ class MacetaApp(tk.Tk):
             variable=self.filter_pending_sub_var,
             command=self._apply_filter,
         ).pack(side=tk.LEFT, padx=8)
+        ttk.Checkbutton(filt, text="Compacto",
+                        variable=self.compact_cols_var,
+                        command=self._apply_compact_cols
+                        ).pack(side=tk.RIGHT, padx=(0, 6))
         self._font_controls(filt, lambda: self.tree, "biblio")
         self.pref_indicator_var = tk.StringVar(value="")
         ttk.Label(filt, textvariable=self.pref_indicator_var,
                   foreground="#888").pack(side=tk.RIGHT, padx=8)
 
-        cols = ("codec", "bitrate", "sr", "dur", "bpm", "cutoff",
+        cols = ("tec", "codec", "bitrate", "sr", "dur", "bpm", "cutoff",
                 "verdict", "detail", "slsk")
         headers = {
+            "tec":     ("Audio",     85),
             "codec":   ("Formato",   70),
             "bitrate": ("Bitrate",   85),
             "sr":      ("SR",        75),
@@ -3022,6 +3123,7 @@ class MacetaApp(tk.Tk):
                              anchor=tk.W, stretch=False)
         for v, color in VERDICT_COLORS.items():
             self.tree.tag_configure(v, foreground=color)
+        self._apply_compact_cols()
         self.tree.bind("<Double-1>", self.on_show_spectrum)
         self.bind_all("<Control-a>", self._select_all_tree)
         self.bind_all("<Command-a>", self._select_all_tree)
@@ -3035,11 +3137,13 @@ class MacetaApp(tk.Tk):
                    command=self.on_stop_playback).pack(side=tk.LEFT, padx=6)
         ttk.Separator(player, orient="vertical").pack(
             side=tk.LEFT, fill=tk.Y, padx=8)
-        ttk.Button(player, text="🔎 Analizar todas",
+        self.analyze_btn_var = tk.StringVar(value="🔎 Analizar todas")
+        ttk.Button(player, textvariable=self.analyze_btn_var,
                    command=self.on_analyze_all).pack(side=tk.LEFT)
         ttk.Button(player, text="🔄 Re-analizar",
                    command=self.on_reanalyze).pack(side=tk.LEFT, padx=6)
-        ttk.Button(player, text="⬇ Buscar fakes",
+        self.fakes_btn_var = tk.StringVar(value="⬇ Buscar fakes")
+        ttk.Button(player, textvariable=self.fakes_btn_var,
                    command=self.on_slsk_fakes).pack(side=tk.LEFT, padx=6)
         ttk.Separator(player, orient="vertical").pack(
             side=tk.LEFT, fill=tk.Y, padx=8)
@@ -3203,11 +3307,42 @@ class MacetaApp(tk.Tk):
         tree = tree_getter() if callable(tree_getter) else tree_getter
         if tree is None:
             return
-        size = self.font_sizes.get(key, self._base_font_size()) + delta
-        size = max(self.FONT_MIN, min(self.FONT_MAX, size))
+        antes = self.font_sizes.get(key, self._base_font_size())
+        size = max(self.FONT_MIN, min(self.FONT_MAX, antes + delta))
+        if size == antes:
+            return
         self.font_sizes[key] = size
         self._apply_font_size(tree, key, size)
+        self._scale_columns(tree, size / antes)
         save_user_state({"font_sizes": self.font_sizes})
+        if self._col_save_job:
+            try:
+                self.after_cancel(self._col_save_job)
+            except Exception:
+                pass
+        self._col_save_job = self.after(600, self._save_column_widths)
+
+    def _scale_columns(self, tree, ratio):
+        """Las columnas acompañan al tamaño de letra.
+
+        Se escala lo que haya, no se recalcula desde cero: si el usuario
+        ha estrechado una columna a mano, sigue siendo la estrecha."""
+        try:
+            cols = ("#0",) + tuple(tree.cget("columns") or ())
+        except Exception:
+            return
+        for c in cols:
+            try:
+                w = int(tree.column(c, "width"))
+            except Exception:
+                continue
+            nuevo = max(30, int(round(w * ratio)))
+            try:
+                tree.column(c, width=nuevo,
+                            minwidth=min(int(tree.column(c, "minwidth")),
+                                         nuevo))
+            except Exception:
+                pass
 
     def _restore_font_sizes(self):
         for key, getter in self._font_keys.items():
@@ -3305,6 +3440,25 @@ class MacetaApp(tk.Tk):
                     break
                 d = d.parent
         return stats
+
+    def _refresh_folder_counts(self):
+        """Actualiza solo los números del árbol, sin rehacerlo.
+
+        Durante un análisis largo esto se llama cada segundo: rehacer el
+        árbol entero perdería lo desplegado y la selección, y con 4500
+        filas no sale gratis."""
+        if not getattr(self, "_folder_paths", None):
+            return
+        stats = self._folder_stats()
+        for iid, path in list(self._folder_paths.items()):
+            if not self.folder_tree.exists(iid):
+                continue
+            n, fake, pend = stats.get(path, [0, 0, 0])
+            vals = (n, fake or "", pend or "")
+            if self.folder_tree.item(iid, "values") != vals:
+                tag = "hasfake" if fake else ("clean" if n and not pend else "")
+                self.folder_tree.item(iid, values=vals,
+                                      tags=(tag,) if tag else ())
 
     def _rebuild_folder_tree(self):
         """Repinta el árbol conservando lo desplegado y la selección."""
@@ -4118,6 +4272,7 @@ class MacetaApp(tk.Tk):
             self.status.set(
                 f"Filtro: {visible}/{len(self.rows_by_iid)} filas visibles"
             )
+        self._update_scope_labels(visible)
         self._restore_view(anchor, yview0)
         elapsed = time.time() - t0
         if elapsed > 0.1:
@@ -4141,6 +4296,18 @@ class MacetaApp(tk.Tk):
         self._chips_cols = cols
         for i, b in enumerate(btns):
             b.grid(row=i // cols, column=i % cols, sticky="w", padx=(0, 10))
+
+    def _update_scope_labels(self, visible):
+        """Que el botón diga a cuántas va a afectar, no 'todas' a secas."""
+        if not hasattr(self, "analyze_btn_var"):
+            return
+        if self.folder_filter or self.active_bucket.get() != "todas" \
+                or self.filter_var.get().strip():
+            self.analyze_btn_var.set(f"🔎 Analizar estas ({visible})")
+            self.fakes_btn_var.set("⬇ Buscar fakes de aquí")
+        else:
+            self.analyze_btn_var.set(f"🔎 Analizar todas ({visible})")
+            self.fakes_btn_var.set("⬇ Buscar fakes")
 
     def _restore_view(self, anchor, yview0):
         """Deja la vista de Biblioteca donde estaba: pegada a la fila
@@ -4203,6 +4370,20 @@ class MacetaApp(tk.Tk):
         if self.focus_get() is self.tree:
             self.tree.selection_set(self.tree.get_children(""))
             return "break"
+
+    def _apply_compact_cols(self):
+        """Compacto: una celda `● 320` en vez de Formato+Bitrate+SR."""
+        compacto = bool(self.compact_cols_var.get())
+        cols = list(self.tree.cget("columns"))
+        if compacto:
+            visibles = [c for c in cols if c not in ("codec", "bitrate", "sr")]
+        else:
+            visibles = [c for c in cols if c != "tec"]
+        try:
+            self.tree.configure(displaycolumns=visibles)
+        except Exception:
+            pass
+        save_user_state({"compact_cols": compacto})
 
     def _sort_by(self, col):
         rows = [(self.tree.set(iid, col), iid) for iid in self.tree.get_children("")]
@@ -4288,6 +4469,7 @@ class MacetaApp(tk.Tk):
     def _row_values(self, row):
         dash = "—"
         return (
+            tech_badge(row),
             row["codec"],
             f"{row['bitrate_kbps']} kbps" if row["bitrate_kbps"] else "?",
             f"{row['sample_rate']} Hz" if row["sample_rate"] else "?",
@@ -4331,11 +4513,32 @@ class MacetaApp(tk.Tk):
             return
         self._start_analysis(iids)
 
+    def _scope_iids(self) -> list:
+        """Las filas sobre las que actúan los botones de abajo.
+
+        Es **lo que estás viendo**: si hay una carpeta elegida en el
+        explorador (o un chip, o un filtro de texto), los botones operan
+        solo sobre eso. Actuar sobre las 11.000 de la biblioteca cuando
+        tienes abierta una carpeta de 3 no es lo que nadie espera."""
+        oculta = getattr(self, "_hidden_iids", set())
+        return [i for i in self.rows_by_iid if i not in oculta]
+
+    def _scope_label(self) -> str:
+        if self.folder_filter:
+            return f"📂 {Path(self.folder_filter).name}"
+        bucket = self.active_bucket.get()
+        if bucket != "todas":
+            return dict(CHIP_DEFS).get(bucket, bucket)
+        if self.filter_var.get().strip():
+            return "el filtro actual"
+        return "toda la biblioteca"
+
     def on_analyze_all(self):
-        iids = list(self.rows_by_iid.keys())
+        iids = self._scope_iids()
         if not iids:
             messagebox.showinfo("Maceta", "Primero selecciona una carpeta.")
             return
+        self.status.set(f"Analizando {self._scope_label()}…")
         self._start_analysis(iids)
 
     def on_reanalyze(self):
@@ -4343,14 +4546,14 @@ class MacetaApp(tk.Tk):
         si no sobre toda la lista previa confirmación."""
         iids = list(self.tree.selection())
         if not iids:
-            iids = list(self.rows_by_iid.keys())
+            iids = self._scope_iids()
             if not iids:
                 messagebox.showinfo("Maceta", "Primero selecciona una carpeta.")
                 return
             if not messagebox.askyesno(
                 "Maceta",
                 f"No hay nada seleccionado.\n\n¿Re-analizar las {len(iids)} "
-                "canciones de la lista desde cero?\n\n"
+                f"canciones de {self._scope_label()} desde cero?\n\n"
                 "Se ignora el índice: volverá a decodificar cada fichero.",
             ):
                 return
@@ -4444,6 +4647,9 @@ class MacetaApp(tk.Tk):
             f"Analizadas {done}/{total} — última: {row['name']} → {row['verdict']}"
         )
         self._schedule_filter_refresh()
+        # Los contadores del explorador van bajando a la vez que avanza
+        # el análisis, en vez de quedarse congelados hasta el final.
+        self._schedule_folder_refresh(rebuild=False)
 
     @staticmethod
     def _fmt_dur(s):
@@ -4452,14 +4658,15 @@ class MacetaApp(tk.Tk):
         m, sec = divmod(int(s), 60)
         return f"{m}:{sec:02d}"
 
-    def _schedule_folder_refresh(self):
+    def _schedule_folder_refresh(self, rebuild=True):
         """Repintar el árbol por cada fila analizada sería absurdo."""
         if getattr(self, "_folder_job", None):
             try:
                 self.after_cancel(self._folder_job)
             except Exception:
                 pass
-        self._folder_job = self.after(700, self._rebuild_folder_tree)
+        cb = self._rebuild_folder_tree if rebuild else self._refresh_folder_counts
+        self._folder_job = self.after(700, cb)
 
     def _analysis_done(self):
         analyzed = [r for r in self.rows_by_iid.values() if r.get("analyzed")]
@@ -6429,10 +6636,20 @@ class MacetaApp(tk.Tk):
         client = self._connected_client()
         if not client:
             return
+        ambito = set(self._scope_iids())
         candidates = [(i, r) for i, r in self.rows_by_iid.items()
-                      if r.get("analyzed") and r["verdict"] == "FAKE"]
+                      if i in ambito and r.get("analyzed")
+                      and r["verdict"] == "FAKE"]
         if not candidates:
-            messagebox.showinfo("Maceta", "No hay canciones marcadas como FAKE.")
+            messagebox.showinfo(
+                "Maceta",
+                f"No hay canciones FAKE en {self._scope_label()}.")
+            return
+        if not messagebox.askyesno(
+            "Maceta",
+            f"Buscar en Soulseek {len(candidates)} canción(es) FAKE de "
+            f"{self._scope_label()}?",
+        ):
             return
         self._launch_slsk_batch(client, candidates)
 
