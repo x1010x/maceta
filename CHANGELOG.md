@@ -3,6 +3,22 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.47
+
+- **Cuando slskd no arranca, ahora te dice por qué.** Maceta lanzaba
+  slskd mandando su salida a `/dev/null`, así que el error real se
+  perdía y solo quedaba un *"no respondió tras arrancar (revisa
+  config/logs)"* inútil. Ahora guarda su salida en
+  `~/.maceta-slskd.log` y el aviso incluye las líneas de error:
+  *"fatal: Invalid configuration: …"*.
+- **"Probar conexión" responde de verdad.** El resultado aparecía en una
+  etiqueta al fondo del diálogo, lejos del botón, y la petición se hacía
+  en el hilo de la interfaz, que se quedaba congelada hasta 5 s sin
+  decir nada. Ahora sale **al lado del botón**, dice "Probando…" al
+  instante, va en segundo plano y explica el fallo: *"Nadie responde en
+  http://localhost:5030. ¿Has arrancado slskd?"* o *"slskd responde pero
+  rechaza la API key"*.
+
 ## 0.4.46
 
 - **Barras de botones solo con iconos**, estilo macOS: al pasar el ratón

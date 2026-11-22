@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.46"
+VERSION = "0.4.47"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -611,11 +611,25 @@ def read_changelog_entries(path: Path, since_version: str = "",
 
 # ---------- Auto-launch de helpers (slskd, SoulseekQt) ----------
 
-def _spawn_detached(cmd, cwd=None):
-    """Arranca un proceso desligado; sobrevive a la salida de Maceta."""
+SLSKD_LOG = Path.home() / ".maceta-slskd.log"
+
+
+def _spawn_detached(cmd, cwd=None, log_path=None):
+    """Arranca un proceso desligado; sobrevive a la salida de Maceta.
+
+    Con `log_path` su salida se guarda en ese fichero en vez de tirarse:
+    cuando slskd no arranca, su primera línea de error es justo lo que
+    hace falta para saber por qué."""
+    salida = subprocess.DEVNULL
+    if log_path:
+        try:
+            salida = open(log_path, "wb")
+        except OSError:
+            salida = subprocess.DEVNULL
     kw = dict(
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=salida,
+        stderr=subprocess.STDOUT if salida is not subprocess.DEVNULL
+        else subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
     )
     if cwd:
@@ -1124,6 +1138,28 @@ def _wait_for(check, timeout: float) -> bool:
         time.sleep(SLSKD_STARTUP_POLL_S)
 
 
+def _slskd_error_hint() -> str:
+    """Las líneas con pinta de error de lo último que escupió slskd."""
+    try:
+        texto = SLSKD_LOG.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return (f"\n\nNo hay salida en {SLSKD_LOG}. Pruébalo a mano en un "
+                "terminal para ver el error.")
+    lineas = [l.strip() for l in texto.splitlines() if l.strip()]
+    if not lineas:
+        return (f"\n\nslskd no escribió nada en {SLSKD_LOG}. Pruébalo a "
+                "mano en un terminal.")
+    interesantes = [l for l in lineas
+                    if any(p in l.lower() for p in
+                           ("error", "exception", "fatal", "invalid",
+                            "denied", "refused", "in use", "unable",
+                            "cannot", "failed", "required"))]
+    muestra = (interesantes or lineas)[-4:]
+    return ("\n\nLo que dijo slskd:\n  "
+            + "\n  ".join(l[:150] for l in muestra)
+            + f"\n\n(completo en {SLSKD_LOG})")
+
+
 def maybe_launch_helpers() -> tuple:
     """Lee la config y arranca slskd/SoulseekQt si están configurados
     y no vivos aún. slskd se arranca primero y se espera a que responda
@@ -1148,7 +1184,8 @@ def maybe_launch_helpers() -> tuple:
                     msgs.append("slskd corriendo pero no conecta a Soulseek "
                                "(revisa tu red)")
                     failed = True
-        elif _spawn_detached([slskd_bin], cwd=str(Path(slskd_bin).parent)):
+        elif _spawn_detached([slskd_bin], cwd=str(Path(slskd_bin).parent),
+                             log_path=SLSKD_LOG):
             if _wait_for(lambda: _slskd_alive(url, key), SLSKD_STARTUP_TIMEOUT_S):
                 if _wait_for(lambda: _slskd_logged_in(url, key),
                              SLSKD_RECONNECT_TIMEOUT_S):
@@ -1158,10 +1195,11 @@ def maybe_launch_helpers() -> tuple:
                                "(revisa tu red)")
                     failed = True
             else:
-                msgs.append("slskd no respondió tras arrancar (revisa config/logs)")
+                msgs.append("slskd no respondió tras arrancar."
+                            + _slskd_error_hint())
                 failed = True
         else:
-            msgs.append("slskd no se pudo arrancar")
+            msgs.append("slskd no se pudo arrancar" + _slskd_error_hint())
             failed = True
 
     sqt = (cfg.get("soulseekqt_binary") or "").strip()
@@ -8164,6 +8202,7 @@ class OptionsDialog(tk.Toplevel):
         self._cfg_vars = {}
         self._snapshot = {}
         self._result_var = tk.StringVar(value="")
+        self._result_labels = []
 
         nb = ttk.Notebook(self)
         nb.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 4))
@@ -8226,7 +8265,15 @@ class OptionsDialog(tk.Toplevel):
         if kind == "action":
             box = ttk.Frame(frame)
             ttk.Button(box, text=f["button"],
-                       command=getattr(self, f"_do_{f['cmd']}")).pack()
+                       command=getattr(self, f"_do_{f['cmd']}")
+                       ).pack(side=tk.LEFT)
+            # El resultado va aquí mismo: antes solo aparecía en una
+            # etiqueta al fondo del diálogo y no se veía.
+            lbl = ttk.Label(box, textvariable=self._result_var,
+                            foreground="#1a7f37", wraplength=330,
+                            justify="left")
+            lbl.pack(side=tk.LEFT, padx=10)
+            self._result_labels.append(lbl)
             return box
         var = self._var_for(f, cfg)
         if kind == "bool":
@@ -8266,27 +8313,58 @@ class OptionsDialog(tk.Toplevel):
 
     # ---------- acciones ----------
 
+    def _resultado(self, texto, ok=True):
+        self._result_var.set(texto)
+        for lbl in self._result_labels:
+            try:
+                lbl.configure(foreground="#1a7f37" if ok else "#d04a3f")
+            except Exception:
+                pass
+
     def _do_test_slskd(self):
         url = self._cfg_vars["slskd_url"].get().strip()
         key = self._cfg_vars["slskd_api_key"].get().strip()
-        try:
-            info = SlskdClient(url, key).ping()
-            self._result_var.set(
-                f"✓ Conectado — slskd {info.get('version', '?')}")
-        except Exception as e:
-            self._result_var.set(f"✗ {e}")
+        if not url:
+            self._resultado("Falta la URL de slskd", ok=False)
+            return
+        # Sin esto la ventana se queda muda (y congelada) mientras dura
+        # la petición: hasta 5 s si slskd no contesta.
+        self._resultado(f"Probando {url}…")
+        self.update_idletasks()
+
+        def worker():
+            try:
+                info = SlskdClient(url, key).ping()
+                ver = info.get("version", "?")
+                self.after(0, self._resultado,
+                           f"✓ Conectado — slskd {ver}", True)
+            except Exception as e:
+                msg = str(e)
+                if "Connection refused" in msg or "Max retries" in msg:
+                    pista = (f"✗ Nadie responde en {url}. ¿Has arrancado "
+                             "slskd? Pruébalo en un terminal.")
+                elif "401" in msg or "403" in msg:
+                    pista = ("✗ slskd responde pero rechaza la API key. "
+                             "Comprueba que es la misma que en slskd.yml.")
+                else:
+                    pista = f"✗ {msg[:160]}"
+                self.after(0, self._resultado, pista, False)
+        threading.Thread(target=worker, daemon=True,
+                         name="test-slskd").start()
 
     def _do_test_update(self):
+        self._resultado("Comprobando…")
+        self.update_idletasks()
         try:
             info = check_for_update(
                 self._cfg_vars["update_token"].get().strip(),
                 self._cfg_vars["update_repo"].get().strip(),
                 self._cfg_vars["update_branch"].get().strip())
-            self._result_var.set(
+            self._resultado(
                 f"✓ Local v{VERSION} · remoto v{info['remote_version']} "
                 f"({'hay actualización' if info['is_newer'] else 'al día'})")
         except Exception as e:
-            self._result_var.set(f"✗ {e}")
+            self._resultado(f"✗ {str(e)[:160]}", False)
 
     def _do_banned(self):
         BannedPeersDialog(self.app)
