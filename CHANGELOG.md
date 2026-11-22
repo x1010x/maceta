@@ -3,6 +3,18 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.48
+
+- **Arreglado: las canciones sustituidas no salían en el chip
+  «Sustituidas».** La columna Calidad las marcaba bien («⬇ Sustituida»),
+  pero el contador de arriba las metía en «Sin analizar» y marcaba 0.
+  El chip miraba si la canción estaba analizada antes que su estado de
+  Soulseek, y como sustituir deja la canción pendiente de reanálisis,
+  caía en el saco equivocado. Ahora el chip usa el mismo orden que la
+  columna: una sustituida es una sustituida aunque haya que reanalizarla.
+  Lo mismo valía para «en proceso» (convirtiendo, en cola). El contador
+  se actualiza solo al sustituir, sin tener que tocar nada.
+
 ## 0.4.47
 
 - **Cuando slskd no arranca, ahora te dice por qué.** Maceta lanzaba

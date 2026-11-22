@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.47"
+VERSION = "0.4.48"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2185,23 +2185,23 @@ def row_bucket(row: dict) -> str:
     una descarga que no cuadra con el original, 'fakes' es calidad real
     por debajo de lo declarado, y 'errores' es un fallo técnico al
     analizar. Son tres trabajos distintos."""
-    if not row.get("analyzed"):
-        return "sin_analizar"
+    # El estado de Soulseek se mira ANTES que `analyzed`, igual que en
+    # display_verdict: una canción recién sustituida queda sin analizar
+    # (el fichero cambió), pero su sitio es "sustituidas", no
+    # "sin_analizar". Si no, el chip y la columna Calidad se contradicen.
     s = (row.get("slsk_status") or "").lower()
-    # Movimientos de Soulseek en curso
     if any(k in s for k in ("buscando", "verificando",
                              "descarg", "convirtiendo")):
         return "en_proceso"
     if s.startswith("↓") or "queued" in s or "cola" in s:
         return "en_proceso"
-    # Ya sustituida / convertida por nosotros
     if s.startswith("✓"):
         return "sustituidas"
-    # Una descarga que no cuadra con el original manda sobre el
-    # veredicto: es trabajo pendiente aunque la canción sea OK. Así el
-    # chip coincide con lo que pinta display_verdict.
+    # Una descarga que no cuadra con el original manda sobre el veredicto.
     if "no coincide" in s:
         return "a_revisar"
+    if not row.get("analyzed"):
+        return "sin_analizar"
     # OK nativa (nada que hacer, siempre estuvo bien)
     v = row.get("verdict") or ""
     if v in ("OK", "LOSSLESS"):
@@ -6934,6 +6934,8 @@ class MacetaApp(tk.Tk):
         if orig_iid in self.rows_by_iid and self.tree.exists(orig_iid):
             self.tree.item(orig_iid, text=row["name"],
                            values=self._row_values(row), tags=("PENDING",))
+        self._schedule_filter_refresh()
+        self._schedule_folder_refresh(rebuild=False)
         self.status.set(f"Sustituido ({reason}): {new_path.name}")
         # Refrescar la pestaña Descargas (el fichero ya no está allí)
         try:
