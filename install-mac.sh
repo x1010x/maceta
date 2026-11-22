@@ -291,26 +291,74 @@ if [ -z "$SLSKD" ]; then
 fi
 
 # ---------- configuración de slskd + enlace con Maceta ----------
-if [ -n "$SLSKD" ] && [ "$DRY" != "1" ]; then
-    if [ -f "$SLSKD_YML" ]; then
-        CLAVE="$(sed -n "s/^[[:space:]]*key:[[:space:]]*\(.*\)/\1/p" \
-                 "$SLSKD_YML" | head -1 | tr -d "\"' ")"
-        [ -n "$CLAVE" ] && ok "Config de slskd ya existente, reutilizo su API key" \
-            || warn "Tu slskd.yml no tiene api key; añádela a mano"
-    elif ask_yes_no "¿Creo la configuración de slskd (usuario, clave y carpeta compartida)?" MACETA_SLSKD_CONF; then
-        printf "  Usuario de Soulseek: " > /dev/tty
-        read -r SL_USER < /dev/tty
-        printf "  Contraseña (no se muestra): " > /dev/tty
-        read -rs SL_PASS < /dev/tty; printf "\n" > /dev/tty
-        printf "  Carpeta a compartir [%s]: " "$MACETA_DIR/downloads" > /dev/tty
-        read -r SL_SHARE < /dev/tty
-        SL_SHARE="${SL_SHARE:-$MACETA_DIR/downloads}"
-        mkdir -p "$SL_SHARE" "$(dirname "$SLSKD_YML")"
-        CLAVE="$(openssl rand -hex 24)"
-        cat > "$SLSKD_YML" <<YML
+
+# ¿Podemos hablar con un terminal? Con `curl | bash` la entrada estándar
+# es el script, y en CI o cron no hay terminal ninguno.
+have_tty() { [ -r /dev/tty ] && (printf "" > /dev/tty) 2>/dev/null; }
+
+pedir() {   # pedir <mensaje> <variable_entorno> [oculto]
+    local mensaje="$1" var="$2" oculto="${3:-}" valor
+    valor="$(eval printf %s "\"\${$var:-}\"")"
+    if [ -n "$valor" ]; then printf %s "$valor"; return 0; fi
+    have_tty || return 1
+    printf "  %s" "$mensaje" > /dev/tty
+    if [ -n "$oculto" ]; then
+        read -rs valor < /dev/tty; printf "\n" > /dev/tty
+    else
+        read -r valor < /dev/tty
+    fi
+    printf %s "$valor"
+}
+
+yml_campo() { sed -n "s/^[[:space:]]*$1:[[:space:]]*//p" "$SLSKD_YML" 2>/dev/null \
+              | head -1 | tr -d "\"' "; }
+
+escribir_credenciales() {   # usuario, contraseña -> reescribe solo esas dos líneas
+    "$PY" - "$SLSKD_YML" "$1" "$2" <<'PYYML'
+import re, shutil, sys
+ruta, usuario, clave = sys.argv[1], sys.argv[2], sys.argv[3]
+shutil.copy2(ruta, ruta + ".bak")
+texto = open(ruta, encoding="utf-8").read()
+for campo, valor in (("username", usuario), ("password", clave)):
+    patron = re.compile(r"^(\s*%s:).*$" % campo, re.M)
+    if patron.search(texto):
+        texto = patron.sub(lambda m: "%s %s" % (m.group(1), valor), texto, count=1)
+    else:
+        texto = re.sub(r"^(soulseek:\s*)$",
+                       lambda m: "%s\n  %s: %s" % (m.group(1), campo, valor),
+                       texto, count=1, flags=re.M)
+open(ruta, "w", encoding="utf-8").write(texto)
+print("  \u2713 Credenciales actualizadas (copia previa en %s.bak)" % ruta)
+PYYML
+}
+
+crear_config_slskd() {
+    local usuario clave_sk compartida
+    usuario="$(pedir "Usuario de Soulseek: " MACETA_SL_USER)" || return 1
+    clave_sk="$(pedir "Contraseña (no se muestra): " MACETA_SL_PASS oculto)" || return 1
+    # Carpeta propia, nunca la de descargas: esa la vacía el botón
+    # "Borrar TODO" de Maceta y tiene ficheros a medio bajar.
+    COMPARTIDA_DEF="$HOME/maceta-compartido"
+    compartida="$(pedir "Carpeta a compartir [$COMPARTIDA_DEF]: " MACETA_SL_SHARE)" || true
+    compartida="${compartida:-$COMPARTIDA_DEF}"
+    mkdir -p "$compartida" "$(dirname "$SLSKD_YML")"
+    if [ ! -f "$compartida/LEEME.txt" ]; then
+        cat > "$compartida/LEEME.txt" <<LEEME
+Esta es la carpeta que compartes en Soulseek.
+
+Copia aquí (o enlaza con un alias) la música que quieras ofrecer a los
+demás. Compartir importa: muchos usuarios rechazan o dejan en cola
+indefinida a quien no comparte nada, y entonces tus descargas no
+arrancan.
+
+Una carpeta vacía cuenta casi como no compartir. Mete algo.
+LEEME
+    fi
+    CLAVE="$(openssl rand -hex 24)"
+    cat > "$SLSKD_YML" <<YML
 soulseek:
-  username: $SL_USER
-  password: $SL_PASS
+  username: $usuario
+  password: $clave_sk
 web:
   authentication:
     api_keys:
@@ -319,12 +367,42 @@ web:
         cidr: 127.0.0.1/32,::1/128
 shares:
   directories:
-    - $SL_SHARE
+    - $compartida
 YML
-        chmod 600 "$SLSKD_YML"
-        ok "slskd.yml creado en $SLSKD_YML"
-        printf "    Compartes %s — importante: muchos peers rechazan a\n" "$SL_SHARE"
-        printf "    quien no comparte nada, y las descargas no arrancan.\n"
+    chmod 600 "$SLSKD_YML"
+    ok "slskd.yml creado en $SLSKD_YML"
+    local n
+    n=$(find "$compartida" -type f ! -name "LEEME.txt" 2>/dev/null | wc -l | tr -d " ")
+    printf "    Compartes: %s (%s ficheros)\n" "$compartida" "$n"
+    if [ "$n" = "0" ]; then
+        warn "Esa carpeta está vacía, que para los demás es casi como no"
+        warn "compartir. Copia ahí algo de música: muchos peers dejan en"
+        warn "cola indefinida a quien no comparte."
+    fi
+}
+
+if [ -n "$SLSKD" ] && [ "$DRY" != "1" ]; then
+    if [ -f "$SLSKD_YML" ]; then
+        CLAVE="$(yml_campo key)"
+        USUARIO_ACTUAL="$(yml_campo username)"
+        ok "Config de slskd ya existente${USUARIO_ACTUAL:+ (usuario: $USUARIO_ACTUAL)}"
+        [ -n "$CLAVE" ] || warn "No tiene api key; añádela a mano al slskd.yml"
+        if ask_yes_no "¿Cambiar el usuario o la contraseña de Soulseek?" \
+                      MACETA_SL_CHANGE; then
+            NUEVO_USER="$(pedir "Usuario [$USUARIO_ACTUAL]: " MACETA_SL_USER)" || NUEVO_USER=""
+            NUEVA_PASS="$(pedir "Contraseña nueva (no se muestra): " MACETA_SL_PASS oculto)" || NUEVA_PASS=""
+            if [ -n "$NUEVA_PASS" ]; then
+                escribir_credenciales "${NUEVO_USER:-$USUARIO_ACTUAL}" "$NUEVA_PASS"
+                warn "Reinicia slskd para que coja las credenciales nuevas."
+            else
+                warn "Sin contraseña nueva: no toco el slskd.yml."
+            fi
+        fi
+    elif ask_yes_no "¿Creo la configuración de slskd (usuario, contraseña y carpeta compartida)?" MACETA_SLSKD_CONF; then
+        if ! crear_config_slskd; then
+            warn "Sin terminal para preguntarte: me salto la configuración."
+            warn "Relánzalo en un terminal, o pasa MACETA_SL_USER y MACETA_SL_PASS."
+        fi
     fi
 
     if [ -n "${CLAVE:-}" ]; then
@@ -354,5 +432,25 @@ printf "  Ábrela desde %s, o con:\n" "$APP_DIR"
 printf "      open '%s'\n\n" "$APP"
 printf "  ffmpeg: %s\n" "${FFMPEG:-NO INSTALADO}"
 printf "  slskd : %s\n" "${SLSKD:-no instalado (opcional)}"
+
+if [ -n "${SLSKD:-}" ]; then
+    printf "\n%s── Lo que tiene que haber en Maceta ──%s\n" "$bold" "$off"
+    printf "  Preferencias → ⚙ Opciones… → pestaña «slskd»\n\n"
+    printf "    URL de slskd : %s\n" "http://localhost:5030"
+    printf "    API key      : %s\n" "${CLAVE:-(mírala en $SLSKD_YML)}"
+    printf "    Binario slskd: %s\n" "$SLSKD"
+    printf "\n  Y pulsa «Probar conexión»: debe responder «Conectado».\n"
+    if [ -n "${CLAVE:-}" ] && [ "$DRY" != "1" ]; then
+        printf "  %s(ya te lo he dejado puesto; esto es solo para comprobarlo)%s\n" \
+               "$green" "$off"
+    fi
+    USUARIO_FIN="$(yml_campo username 2>/dev/null || true)"
+    COMPARTIDA_FIN="$(sed -n "s/^[[:space:]]*-[[:space:]]*\(\/.*\)/\1/p" \
+                      "$SLSKD_YML" 2>/dev/null | head -1)"
+    [ -n "$USUARIO_FIN" ] && printf "\n  Tu usuario de Soulseek: %s\n" "$USUARIO_FIN"
+    [ -n "$COMPARTIDA_FIN" ] && printf "  Compartes: %s\n" "$COMPARTIDA_FIN"
+    printf "\n  Arranca slskd con:  %s\n" "$SLSKD"
+    printf "  (o deja que lo arranque Maceta: ya sabe dónde está)\n"
+fi
 printf "  Para actualizar en el futuro, vuelve a lanzar este script.\n"
 printf "  Si quieres la parte de Soulseek, sigue la sección 'Soulseek' del README.\n\n"

@@ -247,46 +247,76 @@ configurables.
 ## Soulseek
 
 La parte de descarga es **opcional**: el análisis, el espectro y el BPM
-funcionan sin tocar nada de esto. Si la quieres, hace falta **slskd**
-corriendo en tu máquina — los clientes clásicos (SoulseekQt, Nicotine+) no
-exponen una API con la que automatizar.
+funcionan sin tocar nada de esto.
 
-**1. Instala slskd** desde [sus releases](https://github.com/slskd/slskd/releases):
+**No necesitas instalar Soulseek ni registrarte en ninguna web.** Maceta
+habla con [slskd](https://github.com/slskd/slskd), que es un cliente de
+Soulseek completo por su cuenta — no un complemento del SoulseekQt
+oficial. Y la cuenta de Soulseek se crea sola: eliges un usuario y una
+contraseña, y el servidor te los registra la primera vez que conectas.
+Si el nombre está cogido, el login falla y pruebas con otro.
+
+### Lo fácil: que lo haga el instalador
+
+El `install-mac.sh` de arriba se encarga de todo. Cuando llegue a esta
+parte te preguntará:
+
+```
+¿Instalo slskd 0.26.2? [S/n]
+¿Creo la configuración de slskd (usuario, contraseña y carpeta compartida)? [S/n]
+  Usuario de Soulseek:              ← te lo inventas aquí
+  Contraseña (no se muestra):       ← y aquí
+  Carpeta a compartir [~/maceta-compartido]:
+```
+
+Descarga slskd, le quita la cuarentena de Gatekeeper, genera una API key,
+escribe el `slskd.yml` con permisos `600` y **deja Maceta ya apuntando a
+él**. Al terminar te imprime exactamente qué hay en cada campo por si
+quieres comprobarlo en *Preferencias → ⚙ Opciones… → slskd*.
+
+**Para cambiar la contraseña más adelante**, vuelve a lanzar el
+instalador: detecta que ya hay configuración, te dice con qué usuario
+estás y pregunta si quieres cambiar usuario o contraseña. Conserva la
+API key y deja una copia en `slskd.yml.bak`.
+
+### A mano, si lo prefieres
+
+1. Descarga slskd de [sus releases](https://github.com/slskd/slskd/releases):
 
 | Sistema | Fichero | Nota |
 | --- | --- | --- |
-| macOS Apple Silicon | `slskd-*-osx-arm64.zip` | al abrirlo la primera vez, macOS lo bloquea por no estar firmado: botón derecho → *Abrir*, o `xattr -d com.apple.quarantine slskd` |
+| macOS Apple Silicon | `slskd-*-osx-arm64.zip` | la primera vez macOS lo bloquea por no estar firmado: botón derecho → *Abrir*, o `xattr -d com.apple.quarantine slskd` |
 | macOS Intel | `slskd-*-osx-x64.zip` | igual |
 | Windows | `slskd-*-win-x64.zip` | SmartScreen avisará: *Más información → Ejecutar de todas formas* |
-| Linux | `slskd-*-linux-x64.zip` | `chmod +x slskd` antes de arrancarlo · hay `linux-arm64` para Raspberry Pi |
+| Linux | `slskd-*-linux-x64.zip` | `chmod +x slskd` · hay `linux-arm64` para Raspberry Pi |
 | Cualquiera | [Docker](https://hub.docker.com/r/slskd/slskd) | `docker run -p 5030:5030 slskd/slskd` |
 
-**2. Arráncalo una vez** para que genere su fichero de configuración, y páralo.
-
-**3. Edita `slskd.yml`** (lo crea en `~/.local/share/slskd/` en macOS y Linux,
-y en `%localappdata%\slskd\` en Windows):
+2. Crea su configuración en `~/.local/share/slskd/slskd.yml` (en Windows,
+   `%localappdata%\slskd\`):
 
 ```yaml
 soulseek:
-  username: tu_usuario_de_soulseek
-  password: tu_contraseña
+  username: el_que_quieras
+  password: la_que_quieras
 web:
   authentication:
     api_keys:
       maceta:
-        key: pon-aqui-una-cadena-larga-de-40-o-mas-caracteres
+        key: una-cadena-larga-de-40-o-mas-caracteres
+        cidr: 127.0.0.1/32,::1/128
+shares:
+  directories:
+    - /ruta/a/lo/que/compartes
 ```
 
-**4. Vuelve a arrancar slskd** y, en Maceta, ve a
-**Preferencias → ⚙ Opciones… → slskd**: pega la URL (`http://localhost:5030`)
-y esa misma API key, pulsa **Probar conexión** y guarda.
+3. Arranca slskd y, en Maceta, ve a **Preferencias → ⚙ Opciones… →
+   slskd**: pega la URL (`http://localhost:5030`) y esa misma API key,
+   pulsa **Probar conexión** y guarda. Si le indicas también la ruta del
+   binario, Maceta arranca slskd por ti al abrirse.
 
-Si le indicas la ruta del binario en esa pestaña, Maceta arranca slskd por ti
-al abrirse.
-
-> 💡 Comparte alguna carpeta en tu `slskd.yml` (sección `shares`). Muchos peers
-> rechazan o dejan en cola indefinida a quien no comparte nada, y notarás que
-> las descargas no arrancan.
+> 💡 **Comparte algo de verdad.** Una carpeta vacía cuenta casi como no
+> compartir: muchos peers rechazan o dejan en cola indefinida a quien no
+> ofrece nada, y es la causa más común de que las descargas no arranquen.
 
 ## Qué hace cada pestaña
 
