@@ -229,7 +229,11 @@ fi
 
 # ---------- slskd (opcional) ----------
 SLSKD_DIR="${SLSKD_DIR:-$HOME/slskd}"
-SLSKD_YML="$HOME/.local/share/slskd/slskd.yml"
+# IMPORTANTE: en macOS slskd busca su config en ~/Library/Application
+# Support/slskd/, no en ~/.local/share (que es lo de Linux). Si se
+# escribe en el sitio equivocado, slskd arranca con el yml de ejemplo y
+# las credenciales salen inválidas.
+SLSKD_YML="$HOME/Library/Application Support/slskd/slskd.yml"
 
 find_slskd() {
     for c in "$SLSKD_DIR/slskd" "$HOME/slskd/slskd" "/usr/local/bin/slskd"; do
