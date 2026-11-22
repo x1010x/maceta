@@ -95,11 +95,22 @@ Elige tu sistema:
 curl -fsSL https://raw.githubusercontent.com/x1010x/maceta/main/install-mac.sh | bash
 ```
 
-Instala Miniforge si no lo tienes, crea el entorno con todo, clona el
-repo en `~/maceta` y te deja un **Maceta.app** en `~/Applications` con el
-logo de icono. Para actualizar, vuelve a lanzarlo. Si ya tienes un Python
-con las dependencias, pásaselo y se salta conda:
-`MACETA_PYTHON=/ruta/a/python bash install-mac.sh`.
+El instalador hace todo y **se puede volver a lanzar cuando quieras**:
+
+- Instala Miniforge si no lo tienes y crea el entorno con las dependencias.
+- Clona Maceta en `~/maceta`, o la **actualiza** si ya está
+  (te dice la versión: *"Maceta 0.4.46 ya instalada y al día"*).
+- Deja un **Maceta.app** en `~/Applications` con el logo de icono.
+- Comprueba **ffmpeg** y, si falta, pregunta si lo instala.
+- Pregunta si quieres **slskd** (la parte de Soulseek, opcional): lo baja
+  de sus releases, lo desbloquea del Gatekeeper, y si no tienes
+  configuración te crea el `slskd.yml` con tu usuario, una API key nueva
+  y una carpeta compartida — y deja Maceta ya apuntando a él. Si slskd ya
+  está, mira si hay versión nueva y ofrece actualizarlo.
+
+Variables para no tener que contestar: `MACETA_PYTHON=/ruta/a/python`
+(salta conda), `MACETA_FFMPEG=0/1`, `MACETA_SLSKD=0/1`, `MACETA_YES=1`
+(sí a todo), `MACETA_DIR` y `MACETA_APP_DIR`.
 
 <br>
 

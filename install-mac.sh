@@ -30,10 +30,18 @@ run()  { if [ "$DRY" = "1" ]; then printf "  [dry-run] %s\n" "$*"; else "$@"; fi
 
 # Con `curl … | bash` la entrada estándar es el propio script, así que
 # para preguntar hay que hablar con el terminal directamente.
+# $2 (opcional) = nombre de variable de entorno para responder sin
+# preguntar, p. ej. MACETA_FFMPEG=0. MACETA_YES=1 responde que sí a todo.
 ask_yes_no() {
-    local pregunta="$1" respuesta
-    if [ -n "${MACETA_FFMPEG:-}" ]; then
-        [ "$MACETA_FFMPEG" = "1" ] && return 0 || return 1
+    local pregunta="$1" var="${2:-}" respuesta valor
+    if [ -n "$var" ]; then
+        valor="$(eval printf %s "\"\${$var:-}\"")"
+        if [ -n "$valor" ]; then
+            [ "$valor" = "1" ] && return 0 || return 1
+        fi
+    fi
+    if [ -n "${MACETA_YES:-}" ]; then
+        return 0
     fi
     if [ ! -r /dev/tty ]; then
         warn "Sin terminal interactivo: asumo que SÍ"
@@ -120,13 +128,23 @@ ok "Dependencias listas"
 fi
 
 # ---------- 4. El código ----------
-step "Descargando Maceta en $MACETA_DIR"
+step "Maceta"
+ver_de() { grep -m1 "^VERSION" "$1/maceta.py" 2>/dev/null | cut -d\" -f2; }
 if [ -d "$MACETA_DIR/.git" ]; then
+    ANTES="$(ver_de "$MACETA_DIR")"
     run git -C "$MACETA_DIR" pull --ff-only
-    ok "Actualizado"
+    AHORA="$(ver_de "$MACETA_DIR")"
+    if [ "$ANTES" = "$AHORA" ]; then
+        ok "Maceta $AHORA ya instalada y al día"
+    else
+        ok "Maceta actualizada: $ANTES → $AHORA"
+    fi
+elif [ -e "$MACETA_DIR" ]; then
+    die "$MACETA_DIR existe y no es un clon de git. Muévelo o usa
+    MACETA_DIR=/otra/ruta"
 else
     run git clone "$REPO" "$MACETA_DIR"
-    ok "Clonado"
+    ok "Maceta $(ver_de "$MACETA_DIR") instalada"
 fi
 
 # ---------- 5. Maceta.app ----------
@@ -191,7 +209,7 @@ if [ -n "$FFMPEG" ]; then
 else
     warn "No hay ffmpeg. Sin él no se pueden analizar MP3, ni convertir a"
     warn "320, ni usar el reproductor."
-    if ask_yes_no "¿Lo instalo ahora?"; then
+    if ask_yes_no "¿Lo instalo ahora?" MACETA_FFMPEG; then
         if [ -n "${CONDA:-}" ] && [ -x "${CONDA:-}" ]; then
             run "$CONDA" install -n "$ENV_NAME" -c conda-forge -y ffmpeg
         elif command -v brew >/dev/null 2>&1; then
@@ -209,11 +227,132 @@ else
     fi
 fi
 
+# ---------- slskd (opcional) ----------
+SLSKD_DIR="${SLSKD_DIR:-$HOME/slskd}"
+SLSKD_YML="$HOME/.local/share/slskd/slskd.yml"
+
+find_slskd() {
+    for c in "$SLSKD_DIR/slskd" "$HOME/slskd/slskd" "/usr/local/bin/slskd"; do
+        [ -x "$c" ] && { echo "$c"; return 0; }
+    done
+    command -v slskd 2>/dev/null && return 0
+    return 1
+}
+
+# "v0.26.2" y "0.26.2.0 (0.26.2.0+e472ecd7)" son la misma versión: se
+# comparan solo los tres primeros números.
+norm_ver() {
+    printf %s "$1" | sed -e "s/^v//" -e "s/[^0-9.].*$//" | cut -d. -f1-3
+}
+
+slskd_latest() {
+    curl -fsSL "https://api.github.com/repos/slskd/slskd/releases/latest" \
+        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1
+}
+
+step "Soulseek (slskd) — opcional"
+SLSKD="$(find_slskd || true)"
+ULTIMA="$(slskd_latest || true)"
+if [ -n "$SLSKD" ]; then
+    INSTALADA="$("$SLSKD" --version 2>/dev/null | head -1 | tr -d "\r")"
+    ok "slskd ya instalado en $SLSKD${INSTALADA:+ (v$(norm_ver "$INSTALADA"))}"
+    if [ -n "$ULTIMA" ] && [ -n "$INSTALADA" ] && \
+       [ "$(norm_ver "$ULTIMA")" != "$(norm_ver "$INSTALADA")" ]; then
+        warn "Hay una versión nueva: $ULTIMA"
+        if ask_yes_no "¿Actualizo slskd?" MACETA_SLSKD; then SLSKD=""; fi
+    fi
+fi
+
+if [ -z "$SLSKD" ]; then
+    printf "  slskd es lo que conecta Maceta con Soulseek para buscar y\n"
+    printf "  descargar. El análisis de tu música funciona sin él.\n"
+    if ask_yes_no "¿Instalo slskd${ULTIMA:+ $ULTIMA}?" MACETA_SLSKD; then
+        case "$ARCH" in
+            arm64) SL_ARCH="osx-arm64" ;;
+            *)     SL_ARCH="osx-x64" ;;
+        esac
+        URL="https://github.com/slskd/slskd/releases/latest/download/slskd-${ULTIMA#v}-${SL_ARCH}.zip"
+        TMPZ="$(mktemp -d)/slskd.zip"
+        run mkdir -p "$SLSKD_DIR"
+        if run curl -fsSL "$URL" -o "$TMPZ"; then
+            run unzip -oq "$TMPZ" -d "$SLSKD_DIR"
+            run chmod +x "$SLSKD_DIR/slskd"
+            # Sin esto, macOS lo bloquea por venir de internet
+            run xattr -dr com.apple.quarantine "$SLSKD_DIR" 2>/dev/null || true
+            SLSKD="$SLSKD_DIR/slskd"
+            ok "slskd instalado en $SLSKD"
+        else
+            warn "No pude descargar $URL"
+            warn "Bájalo a mano de https://github.com/slskd/slskd/releases"
+        fi
+    else
+        warn "Sin slskd: la pestaña Soulseek no podrá buscar ni descargar."
+    fi
+fi
+
+# ---------- configuración de slskd + enlace con Maceta ----------
+if [ -n "$SLSKD" ] && [ "$DRY" != "1" ]; then
+    if [ -f "$SLSKD_YML" ]; then
+        CLAVE="$(sed -n "s/^[[:space:]]*key:[[:space:]]*\(.*\)/\1/p" \
+                 "$SLSKD_YML" | head -1 | tr -d "\"' ")"
+        [ -n "$CLAVE" ] && ok "Config de slskd ya existente, reutilizo su API key" \
+            || warn "Tu slskd.yml no tiene api key; añádela a mano"
+    elif ask_yes_no "¿Creo la configuración de slskd (usuario, clave y carpeta compartida)?" MACETA_SLSKD_CONF; then
+        printf "  Usuario de Soulseek: " > /dev/tty
+        read -r SL_USER < /dev/tty
+        printf "  Contraseña (no se muestra): " > /dev/tty
+        read -rs SL_PASS < /dev/tty; printf "\n" > /dev/tty
+        printf "  Carpeta a compartir [%s]: " "$MACETA_DIR/downloads" > /dev/tty
+        read -r SL_SHARE < /dev/tty
+        SL_SHARE="${SL_SHARE:-$MACETA_DIR/downloads}"
+        mkdir -p "$SL_SHARE" "$(dirname "$SLSKD_YML")"
+        CLAVE="$(openssl rand -hex 24)"
+        cat > "$SLSKD_YML" <<YML
+soulseek:
+  username: $SL_USER
+  password: $SL_PASS
+web:
+  authentication:
+    api_keys:
+      maceta:
+        key: $CLAVE
+        cidr: 127.0.0.1/32,::1/128
+shares:
+  directories:
+    - $SL_SHARE
+YML
+        chmod 600 "$SLSKD_YML"
+        ok "slskd.yml creado en $SLSKD_YML"
+        printf "    Compartes %s — importante: muchos peers rechazan a\n" "$SL_SHARE"
+        printf "    quien no comparte nada, y las descargas no arrancan.\n"
+    fi
+
+    if [ -n "${CLAVE:-}" ]; then
+        "$PY" - "$CLAVE" "$SLSKD" <<PYCFG
+import json, os, sys
+clave, binario = sys.argv[1], sys.argv[2]
+p = os.path.expanduser("~/.maceta_config.json")
+cfg = {}
+if os.path.exists(p):
+    try:
+        cfg = json.load(open(p))
+    except Exception:
+        cfg = {}
+cfg.setdefault("slskd_url", "http://localhost:5030")
+cfg["slskd_api_key"] = clave
+cfg["slskd_binary"] = binario
+json.dump(cfg, open(p, "w"), indent=2, ensure_ascii=False)
+print("  \u2713 Maceta configurada para hablar con slskd")
+PYCFG
+    fi
+fi
+
 # ---------- Final ----------
 VER="$(grep -m1 '^VERSION' "$MACETA_DIR/maceta.py" 2>/dev/null | cut -d'"' -f2 || echo "?")"
 printf "\n%s✓ Maceta %s instalada%s\n\n" "$green" "$VER" "$off"
 printf "  Ábrela desde %s, o con:\n" "$APP_DIR"
 printf "      open '%s'\n\n" "$APP"
 printf "  ffmpeg: %s\n" "${FFMPEG:-NO INSTALADO}"
+printf "  slskd : %s\n" "${SLSKD:-no instalado (opcional)}"
 printf "  Para actualizar en el futuro, vuelve a lanzar este script.\n"
 printf "  Si quieres la parte de Soulseek, sigue la sección 'Soulseek' del README.\n\n"
