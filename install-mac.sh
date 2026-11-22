@@ -369,10 +369,14 @@ web:
       maceta:
         key: $CLAVE
         cidr: 127.0.0.1/32,::1/128
+directories:
+  downloads: $MACETA_DIR/downloads
+  incomplete: $MACETA_DIR/downloads/.incomplete
 shares:
   directories:
     - $compartida
 YML
+    mkdir -p "$MACETA_DIR/downloads"
     chmod 600 "$SLSKD_YML"
     ok "slskd.yml creado en $SLSKD_YML"
     local n
