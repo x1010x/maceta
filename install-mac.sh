@@ -28,6 +28,35 @@ warn() { printf "  %s!%s %s\n" "$yellow" "$off" "$1"; }
 die()  { printf "\n%s✗ %s%s\n" "$red" "$1" "$off" >&2; exit 1; }
 run()  { if [ "$DRY" = "1" ]; then printf "  [dry-run] %s\n" "$*"; else "$@"; fi; }
 
+# Con `curl … | bash` la entrada estándar es el propio script, así que
+# para preguntar hay que hablar con el terminal directamente.
+ask_yes_no() {
+    local pregunta="$1" respuesta
+    if [ -n "${MACETA_FFMPEG:-}" ]; then
+        [ "$MACETA_FFMPEG" = "1" ] && return 0 || return 1
+    fi
+    if [ ! -r /dev/tty ]; then
+        warn "Sin terminal interactivo: asumo que SÍ"
+        return 0
+    fi
+    printf "  %s [S/n] " "$pregunta" > /dev/tty
+    read -r respuesta < /dev/tty || respuesta=""
+    case "$respuesta" in
+        [nN]*) return 1 ;;
+        *)     return 0 ;;
+    esac
+}
+
+find_ffmpeg() {
+    # Primero junto al Python que va a usar Maceta: es donde lo deja
+    # conda y donde el programa lo busca, aunque no esté en el PATH.
+    if [ -n "${PY:-}" ] && [ -x "$(dirname "$PY")/ffmpeg" ]; then
+        echo "$(dirname "$PY")/ffmpeg"; return 0
+    fi
+    command -v ffmpeg 2>/dev/null && return 0
+    return 1
+}
+
 [ "$(uname -s)" = "Darwin" ] || die "Esto es el instalador de macOS. En Linux usa el README."
 ARCH="$(uname -m)"   # arm64 en Apple Silicon, x86_64 en Intel
 
@@ -148,10 +177,43 @@ LAUNCHER
 fi
 ok "Maceta.app creado"
 
+# ---------- ffmpeg ----------
+step "Comprobando ffmpeg"
+FFMPEG="$(find_ffmpeg || true)"
+if [ -n "$FFMPEG" ]; then
+    ok "ffmpeg en $FFMPEG"
+    case "$FFMPEG" in
+      */envs/*/bin/ffmpeg)
+        printf "    Está dentro del entorno de Maceta, así que 'which ffmpeg'\n"
+        printf "    no lo encuentra en una terminal normal. Es correcto:\n"
+        printf "    Maceta lo busca junto a su propio Python.\n" ;;
+    esac
+else
+    warn "No hay ffmpeg. Sin él no se pueden analizar MP3, ni convertir a"
+    warn "320, ni usar el reproductor."
+    if ask_yes_no "¿Lo instalo ahora?"; then
+        if [ -n "${CONDA:-}" ] && [ -x "${CONDA:-}" ]; then
+            run "$CONDA" install -n "$ENV_NAME" -c conda-forge -y ffmpeg
+        elif command -v brew >/dev/null 2>&1; then
+            run brew install ffmpeg
+        else
+            die "No tengo ni conda ni Homebrew para instalarlo. Instala
+    Homebrew desde https://brew.sh y luego: brew install ffmpeg"
+        fi
+        FFMPEG="$(find_ffmpeg || true)"
+        [ -n "$FFMPEG" ] && ok "ffmpeg en $FFMPEG" \
+            || warn "Sigue sin aparecer; revisa los mensajes de arriba."
+    else
+        warn "Seguimos sin ffmpeg. Puedes instalarlo luego con:"
+        warn "  brew install ffmpeg"
+    fi
+fi
+
 # ---------- Final ----------
 VER="$(grep -m1 '^VERSION' "$MACETA_DIR/maceta.py" 2>/dev/null | cut -d'"' -f2 || echo "?")"
 printf "\n%s✓ Maceta %s instalada%s\n\n" "$green" "$VER" "$off"
 printf "  Ábrela desde %s, o con:\n" "$APP_DIR"
 printf "      open '%s'\n\n" "$APP"
+printf "  ffmpeg: %s\n" "${FFMPEG:-NO INSTALADO}"
 printf "  Para actualizar en el futuro, vuelve a lanzar este script.\n"
 printf "  Si quieres la parte de Soulseek, sigue la sección 'Soulseek' del README.\n\n"

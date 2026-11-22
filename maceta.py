@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.45"
+VERSION = "0.4.46"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -270,6 +270,73 @@ def analyze_row(row: dict, max_seconds: float = None) -> dict:
 
 
 # ---------- Config persistente ----------
+
+class Tooltip:
+    """Globo de ayuda al pasar el ratón, como los de macOS.
+
+    Lo usan los botones que solo llevan icono: el texto desaparece de la
+    barra pero no la información."""
+
+    def __init__(self, widget, text, delay=450):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._job = None
+        self._tip = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def set_text(self, text):
+        self.text = text
+
+    def _schedule(self, _e=None):
+        self._cancel()
+        self._job = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self._job:
+            try:
+                self.widget.after_cancel(self._job)
+            except Exception:
+                pass
+            self._job = None
+
+    def _show(self):
+        if self._tip or not self.text:
+            return
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self._tip = tk.Toplevel(self.widget)
+        self._tip.wm_overrideredirect(True)
+        try:
+            self._tip.tk.call("::tk::unsupported::MacWindowStyle", "style",
+                              self._tip._w, "help", "noActivates")
+        except Exception:
+            pass
+        lbl = tk.Label(self._tip, text=self.text, justify="left",
+                       background="#2b2b2b", foreground="#f0f0f0",
+                       relief="solid", borderwidth=0, padx=8, pady=4,
+                       font=("TkDefaultFont", 11))
+        lbl.pack()
+        self._tip.update_idletasks()
+        ancho = self._tip.winfo_width()
+        self._tip.wm_geometry(f"+{max(0, x - ancho // 2)}+{y}")
+
+    def _hide(self, _e=None):
+        self._cancel()
+        if self._tip:
+            self._tip.destroy()
+            self._tip = None
+
+
+def icon_button(parent, icon, tooltip, command, width=3, **pack_kw):
+    """Botón solo-icono con su globo de ayuda."""
+    b = ttk.Button(parent, text=icon, command=command, width=width)
+    b.pack(**pack_kw)
+    b._tip = Tooltip(b, tooltip)
+    return b
+
 
 def make_scrollable_tree(parent, **tree_kwargs):
     """Crea un Treeview con scrollbars horizontal + vertical dentro de un
@@ -3359,28 +3426,28 @@ class MacetaApp(tk.Tk):
         # Miniplayer + acciones rápidas de batch
         player = ttk.Frame(parent, padding=(8, 6, 8, 0))
         player.pack(fill=tk.X)
-        ttk.Button(player, text="▶ Reproducir",
-                   command=self.on_play_selected).pack(side=tk.LEFT)
-        ttk.Button(player, text="⏹ Parar",
-                   command=self.on_stop_playback).pack(side=tk.LEFT, padx=6)
+        icon_button(player, "▶", "Reproducir la seleccionada",
+                    self.on_play_selected, side=tk.LEFT)
+        icon_button(player, "⏹", "Parar", self.on_stop_playback,
+                    side=tk.LEFT, padx=6)
         ttk.Separator(player, orient="vertical").pack(
             side=tk.LEFT, fill=tk.Y, padx=8)
-        self.analyze_btn_var = tk.StringVar(value="🔎 Analizar todas")
-        ttk.Button(player, textvariable=self.analyze_btn_var,
-                   command=self.on_analyze_all).pack(side=tk.LEFT)
-        ttk.Button(player, text="🔄 Re-analizar",
-                   command=self.on_reanalyze).pack(side=tk.LEFT, padx=6)
-        self.fakes_btn_var = tk.StringVar(value="⬇ Buscar fakes")
-        ttk.Button(player, textvariable=self.fakes_btn_var,
-                   command=self.on_slsk_fakes).pack(side=tk.LEFT, padx=6)
+        self.analyze_btn_var = tk.StringVar(value="Analizar todas")
+        self._analyze_btn = icon_button(
+            player, "🔎", "Analizar todas", self.on_analyze_all,
+            side=tk.LEFT)
+        icon_button(player, "🔄", "Re-analizar ignorando el índice",
+                    self.on_reanalyze, side=tk.LEFT, padx=6)
+        self.fakes_btn_var = tk.StringVar(value="Buscar fakes")
+        self._fakes_btn = icon_button(
+            player, "⬇", "Buscar en Soulseek las FAKE",
+            self.on_slsk_fakes, side=tk.LEFT, padx=6)
         ttk.Separator(player, orient="vertical").pack(
             side=tk.LEFT, fill=tk.Y, padx=8)
-        ttk.Button(player, text="🗑 Borrar (a archivo/)",
-                   command=self.on_delete_selected).pack(side=tk.LEFT)
-        self._now_playing_label = ttk.Label(
-            player, textvariable=self.now_playing_var, anchor=tk.W
-        )
-        self._now_playing_label.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        icon_button(player, "🗑", "Mover a archivo/ (no borra de verdad)",
+                    self.on_delete_selected, side=tk.LEFT)
+        # Lo que suena se dice en la barra de estado: el cuadro de aquí
+        # ocupaba media barra para repetir lo mismo.
 
         # Preferencias globales — también accesibles desde el menú
         # "Preferencias". Las tenemos duplicadas aquí porque son
@@ -3499,12 +3566,14 @@ class MacetaApp(tk.Tk):
         """Dos iconitos A− / A+ que cambian la letra solo de esa tabla."""
         box = ttk.Frame(parent)
         box.pack(side=tk.RIGHT)
-        ttk.Button(box, text="A−", width=3,
-                   command=lambda: self._bump_font(tree_getter, key, -1)
-                   ).pack(side=tk.LEFT)
-        ttk.Button(box, text="A+", width=3,
-                   command=lambda: self._bump_font(tree_getter, key, +1)
-                   ).pack(side=tk.LEFT, padx=(2, 0))
+        menos = ttk.Button(box, text="A−", width=3,
+                           command=lambda: self._bump_font(tree_getter, key, -1))
+        menos.pack(side=tk.LEFT)
+        menos._tip = Tooltip(menos, "Letra más pequeña en esta tabla")
+        mas = ttk.Button(box, text="A+", width=3,
+                         command=lambda: self._bump_font(tree_getter, key, +1))
+        mas.pack(side=tk.LEFT, padx=(2, 0))
+        mas._tip = Tooltip(mas, "Letra más grande en esta tabla")
         self._font_keys[key] = tree_getter
         return box
 
@@ -3646,8 +3715,9 @@ class MacetaApp(tk.Tk):
     def _build_folder_explorer(self, parent):
         sel = ttk.Frame(parent, padding=(8, 8, 4, 2))
         sel.pack(fill=tk.X)
-        ttk.Button(sel, text="📂 Seleccionar carpeta…",
-                   command=self.on_pick).pack(fill=tk.X)
+        b = ttk.Button(sel, text="📂", command=self.on_pick, width=4)
+        b.pack(side=tk.LEFT)
+        b._tip = Tooltip(b, "Elegir la carpeta de tu música")
         ttk.Label(parent, textvariable=self.folder, foreground="#888",
                   wraplength=230, justify="left",
                   padding=(8, 0, 4, 4)).pack(fill=tk.X)
@@ -3677,11 +3747,10 @@ class MacetaApp(tk.Tk):
 
         btns = ttk.Frame(parent, padding=(8, 0, 0, 6))
         btns.pack(fill=tk.X)
-        ttk.Button(btns, text="🔄 Re-escanear",
-                   command=self.on_rescan_folder).pack(side=tk.LEFT)
-        ttk.Button(btns, text="Toda la biblioteca",
-                   command=self._clear_folder_filter).pack(side=tk.LEFT,
-                                                           padx=4)
+        icon_button(btns, "🔄", "Re-escanear esta carpeta: busca lo nuevo "
+                    "y quita lo borrado", self.on_rescan_folder, side=tk.LEFT)
+        icon_button(btns, "📚", "Volver a toda la biblioteca",
+                    self._clear_folder_filter, side=tk.LEFT, padx=4)
         self._bind_context_menu(self.folder_tree, self._build_folder_context)
 
     def _build_folder_context(self, iid):
@@ -3878,10 +3947,11 @@ class MacetaApp(tk.Tk):
         self.search_entry = ttk.Entry(search, textvariable=self.search_var)
         self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
         self.search_entry.bind("<Return>", lambda _e: self.on_search_query())
-        ttk.Button(search, text="Bajar de Soulseek",
-                   command=self.on_search_query).pack(side=tk.LEFT)
-        ttk.Button(search, text="🗑 Limpiar todo",
-                   command=self.on_clear_all_activity).pack(side=tk.LEFT, padx=(6, 0))
+        icon_button(search, "⬇", "Buscar y descargar de Soulseek",
+                    self.on_search_query, side=tk.LEFT)
+        icon_button(search, "🧨", "Cancelar y borrar TODAS las búsquedas y "
+                    "descargas", self.on_clear_all_activity,
+                    side=tk.LEFT, padx=(6, 0))
         ttk.Checkbutton(
             search, text="⟳ Rebuscar auto",
             variable=self.auto_retry_var,
@@ -3941,14 +4011,14 @@ class MacetaApp(tk.Tk):
                                     anchor=tk.W, stretch=False)
         s_btns = ttk.Frame(s_frame)
         s_btns.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(s_btns, text="Cancelar",
-                   command=self.on_cancel_search).pack(side=tk.LEFT)
-        ttk.Button(s_btns, text="Rebuscar…",
-                   command=self.on_research).pack(side=tk.LEFT, padx=4)
-        ttk.Button(s_btns, text="Limpiar",
-                   command=self.on_clear_searches).pack(side=tk.LEFT, padx=4)
-        ttk.Button(s_btns, text="↻",
-                   command=self._activity_tick, width=3).pack(side=tk.LEFT)
+        icon_button(s_btns, "✕", "Cancelar la búsqueda seleccionada",
+                    self.on_cancel_search, side=tk.LEFT)
+        icon_button(s_btns, "✎", "Rebuscar editando la query",
+                    self.on_research, side=tk.LEFT, padx=4)
+        icon_button(s_btns, "🧹", "Quitar las búsquedas completadas",
+                    self.on_clear_searches, side=tk.LEFT, padx=4)
+        icon_button(s_btns, "↻", "Refrescar", self._activity_tick,
+                    side=tk.LEFT)
         self.search_tree.bind("<<TreeviewSelect>>",
                               lambda _e: (self._on_search_selected(),
                                           self._sync_dl_from_search()))
@@ -4001,10 +4071,10 @@ class MacetaApp(tk.Tk):
                                     anchor=tk.W, stretch=False)
         r_btns = ttk.Frame(r_frame)
         r_btns.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(r_btns, text="⬇ Descargar seleccionados",
-                   command=self._download_selected_results).pack(side=tk.LEFT)
-        ttk.Button(r_btns, text="↻",
-                   command=self._on_search_selected, width=3).pack(side=tk.LEFT, padx=4)
+        icon_button(r_btns, "⬇", "Descargar los resultados seleccionados",
+                    self._download_selected_results, side=tk.LEFT)
+        icon_button(r_btns, "↻", "Recargar los resultados",
+                    self._on_search_selected, side=tk.LEFT, padx=4)
         self.results_tree.bind("<Double-1>",
                                lambda _e: self._download_selected_results())
 
@@ -4038,24 +4108,27 @@ class MacetaApp(tk.Tk):
                           lambda _e: self._sync_search_from_dl())
         d_btns = ttk.Frame(d_frame)
         d_btns.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(d_btns, text="Cancelar",
-                   command=lambda: self.on_cancel_download(remove=False)).pack(side=tk.LEFT)
-        ttk.Button(d_btns, text="Cancelar y borrar",
-                   command=lambda: self.on_cancel_download(remove=True)).pack(side=tk.LEFT, padx=4)
-        ttk.Button(d_btns, text="Rebuscar…",
-                   command=self.on_retry_download).pack(side=tk.LEFT, padx=4)
-        ttk.Button(d_btns, text="⟳ Rebuscar canceladas",
-                   command=self.on_requery_failed).pack(side=tk.LEFT, padx=4)
-        ttk.Button(d_btns, text="Limpiar",
-                   command=self.on_clear_downloads).pack(side=tk.LEFT, padx=4)
-        ttk.Button(d_btns, text="🧹 Vaciar lista",
-                   command=self.on_clear_dl_list).pack(side=tk.LEFT, padx=4)
+        icon_button(d_btns, "✕", "Cancelar la descarga seleccionada",
+                    lambda: self.on_cancel_download(remove=False),
+                    side=tk.LEFT)
+        icon_button(d_btns, "🗑", "Cancelar y quitarla de la lista",
+                    lambda: self.on_cancel_download(remove=True),
+                    side=tk.LEFT, padx=4)
+        icon_button(d_btns, "✎", "Rebuscar esta con otra query",
+                    self.on_retry_download, side=tk.LEFT, padx=4)
+        icon_button(d_btns, "⟳", "Rebuscar TODAS las caídas "
+                    "(canceladas y erroreadas)", self.on_requery_failed,
+                    side=tk.LEFT, padx=4)
+        icon_button(d_btns, "✅", "Quitar las completadas con éxito",
+                    self.on_clear_downloads, side=tk.LEFT, padx=4)
+        icon_button(d_btns, "🧹", "Vaciar la lista: quita todo lo terminado",
+                    self.on_clear_dl_list, side=tk.LEFT, padx=4)
         ttk.Checkbutton(d_btns, text="Mostrar todas",
                         variable=self.show_all_dl_var,
                         command=self._on_show_all_dl).pack(side=tk.LEFT,
                                                            padx=(10, 0))
-        ttk.Button(d_btns, text="↻",
-                   command=self._activity_tick, width=3).pack(side=tk.LEFT)
+        icon_button(d_btns, "↻", "Refrescar", self._activity_tick,
+                    side=tk.LEFT)
 
     def _build_downloads_tab(self, parent):
         """Pestaña con los ficheros que ya viven en downloads/.
@@ -4102,29 +4175,27 @@ class MacetaApp(tk.Tk):
         # Fila 1: playback + acciones habituales (compactas)
         r1 = ttk.Frame(parent, padding=(8, 0, 8, 2))
         r1.pack(fill=tk.X)
-        ttk.Button(r1, text="▶", command=self._play_downloads_selected,
-                   width=3).pack(side=tk.LEFT)
-        ttk.Button(r1, text="⏹", command=self.on_stop_playback,
-                   width=3).pack(side=tk.LEFT, padx=(4, 8))
+        icon_button(r1, "▶", "Reproducir", self._play_downloads_selected,
+                    side=tk.LEFT)
+        icon_button(r1, "⏹", "Parar", self.on_stop_playback,
+                    side=tk.LEFT, padx=(4, 8))
         ttk.Separator(r1, orient="vertical").pack(
             side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-        ttk.Button(r1, text="🪄 Sustituir (auto)",
-                   command=self._substitute_from_downloads_tab
-                   ).pack(side=tk.LEFT)
-        ttk.Button(r1, text="Mostrar en Finder",
-                   command=self._reveal_downloads_selected
-                   ).pack(side=tk.LEFT, padx=6)
+        icon_button(r1, "🪄", "Sustituir el original por esta descarga "
+                    "(automático si se sabe cuál es)",
+                    self._substitute_from_downloads_tab, side=tk.LEFT)
+        icon_button(r1, "📁", "Mostrar en el Finder",
+                    self._reveal_downloads_selected, side=tk.LEFT, padx=6)
 
         # Fila 2: acciones destructivas separadas visualmente
         r2 = ttk.Frame(parent, padding=(8, 2, 8, 8))
         r2.pack(fill=tk.X)
-        ttk.Button(r2, text="🗑 Borrar del disco",
-                   command=self._delete_downloads_selected).pack(side=tk.LEFT)
-        ttk.Button(r2, text="🗑 Borrar TODO",
-                   command=self._delete_all_downloads).pack(side=tk.LEFT, padx=6)
-        ttk.Button(r2, text="🧹 Limpiar no completados",
-                   command=self._clean_incomplete
-                   ).pack(side=tk.LEFT, padx=6)
+        icon_button(r2, "🗑", "Borrar del disco las seleccionadas",
+                    self._delete_downloads_selected, side=tk.LEFT)
+        icon_button(r2, "💣", "Borrar del disco TODA la carpeta de descargas",
+                    self._delete_all_downloads, side=tk.LEFT, padx=6)
+        icon_button(r2, "🧹", "Limpiar los ficheros a medio descargar",
+                    self._clean_incomplete, side=tk.LEFT, padx=6)
 
         self._bind_context_menu(self.dl_files_tree,
                                 self._build_downloads_context)
@@ -4594,11 +4665,17 @@ class MacetaApp(tk.Tk):
             return
         if self.folder_filter or self.active_bucket.get() != "todas" \
                 or self.filter_var.get().strip():
-            self.analyze_btn_var.set(f"🔎 Analizar estas ({visible})")
-            self.fakes_btn_var.set("⬇ Buscar fakes de aquí")
+            analizar = f"Analizar estas {visible} ({self._scope_label()})"
+            fakes = f"Buscar en Soulseek las FAKE de {self._scope_label()}"
         else:
-            self.analyze_btn_var.set(f"🔎 Analizar todas ({visible})")
-            self.fakes_btn_var.set("⬇ Buscar fakes")
+            analizar = f"Analizar todas ({visible})"
+            fakes = "Buscar en Soulseek todas las FAKE"
+        self.analyze_btn_var.set(analizar)
+        self.fakes_btn_var.set(fakes)
+        for btn, texto in ((getattr(self, "_analyze_btn", None), analizar),
+                           (getattr(self, "_fakes_btn", None), fakes)):
+            if btn is not None and getattr(btn, "_tip", None):
+                btn._tip.set_text(texto)
 
     def _restore_view(self, anchor, yview0):
         """Deja la vista de Biblioteca donde estaba: pegada a la fila
@@ -4643,8 +4720,7 @@ class MacetaApp(tk.Tk):
             try: self.tree.tag_configure(verdict, foreground=c[key])
             except Exception: pass
         # Now playing + status
-        try: self._now_playing_label.configure(foreground=c["now_playing_fg"])
-        except Exception: pass
+
         try: self._status_label.configure(foreground=c["status_fg"])
         except Exception: pass
 
@@ -6396,6 +6472,7 @@ class MacetaApp(tk.Tk):
             )
             self._player_path = path
             self.now_playing_var.set(f"▶ {label or Path(path).name}")
+            self.status.set(f"▶ {label or Path(path).name}")
             self.after(500, self._player_poll)
         except Exception as e:
             messagebox.showerror("Maceta", f"No se pudo reproducir: {e}")

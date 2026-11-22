@@ -3,6 +3,23 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.46
+
+- **Barras de botones solo con iconos**, estilo macOS: al pasar el ratón
+  por encima sale un globo diciendo qué hace cada uno. 45 botones
+  pasaron a icono en Biblioteca, el explorador, Actividad y Descargas.
+  Los que cambian según el contexto lo dicen en el globo — *"Analizar
+  estas 3 (📂 Darkwave)"*.
+- **Fuera el cuadro de "sonando"** de la barra de Biblioteca: ocupaba la
+  mitad del ancho para repetir algo que ya se ve. Lo que suena aparece
+  ahora en la barra de estado.
+- **El instalador comprueba ffmpeg y ofrece instalarlo.** Ya lo instalaba
+  con conda, pero dentro del entorno (`~/miniforge3/envs/maceta/bin/`),
+  así que `which ffmpeg` no lo encontraba y parecía que faltaba. Ahora
+  lo dice explícitamente, y si de verdad no está pregunta si instalarlo
+  (por conda o Homebrew). Funciona incluso con `curl … | bash`, leyendo
+  la respuesta del terminal.
+
 ## 0.4.45
 
 - **Arreglado: elegir carpeta mientras otra se está escaneando duplicaba
