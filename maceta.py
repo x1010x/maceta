@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.48"
+VERSION = "0.4.49"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -215,6 +215,9 @@ def scan_row(path: str, use_index: bool = True) -> dict:
         "analyzed": False, "slsk_status": "",
     }
     if use_index:
+        sub_reason = index_substituted(path)
+        if sub_reason:
+            base["slsk_status"] = f"✓ sustituido ({sub_reason})"
         meta = index_meta(path)
         if meta:
             base.update({k: meta.get(k) for k in META_FIELDS})
@@ -904,6 +907,35 @@ def index_put_meta(path: str, row: dict) -> None:
         e["path"] = str(path)
         _paths_map()[str(path)] = digest
         _index_dirty = True
+
+
+def index_mark_substituted(path: str, reason: str) -> None:
+    """Deja constancia en el índice de que esta canción salió de una
+    sustitución, para que siga apareciendo en «Sustituidas» aunque se
+    reinicie Maceta. El `slsk_status` vive solo en memoria; esto es su
+    copia persistente, por hash de contenido."""
+    global _index_dirty
+    digest, e = index_entry(path)
+    if not digest:
+        return
+    size, mtime = _file_fingerprint(path)
+    with _index_lock:
+        idx = load_index()
+        if not e:
+            e = {"size": size, "mtime": mtime, "path": str(path)}
+            idx[digest] = e
+        e["sub"] = reason or "sustituido"
+        e["path"] = str(path)
+        _paths_map()[str(path)] = digest
+        _index_dirty = True
+
+
+def index_substituted(path: str) -> str:
+    """Motivo guardado de sustitución, o "" si esta canción no viene de
+    una. Se valida por hash, así que solo cuenta si el fichero es el que
+    se puso al sustituir."""
+    _digest, e = index_entry(path)
+    return (e or {}).get("sub", "") or ""
 
 
 def hydrate_from_index(row: dict) -> bool:
@@ -4549,6 +4581,7 @@ class MacetaApp(tk.Tk):
             self.after(0, self.status.set,
                        f"No se pudo sustituir {downloaded.name}: {e}")
             return False
+        index_mark_substituted(str(new_path), reason)
         remove_download_link(downloaded.name)
         self.after(0, self.status.set,
                    f"✓ {new_path.name} sustituido ({reason})")
@@ -5582,6 +5615,7 @@ class MacetaApp(tk.Tk):
             row["cutoff_hz"] = None
             row["detail"] = ""
             row["slsk_status"] = f"✓ sustituido ({reason})"
+            index_mark_substituted(str(new_path), reason)
             self.tree.item(orig_iid, text=row["name"],
                            values=self._row_values(row), tags=("PENDING",))
             self._release_active(orig_iid)
@@ -6930,6 +6964,7 @@ class MacetaApp(tk.Tk):
         row["cutoff_hz"] = None
         row["detail"] = ""
         row["slsk_status"] = f"✓ sustituido ({reason})"
+        index_mark_substituted(str(new_path), reason)
         remove_download_link(Path(downloaded_path).name)
         if orig_iid in self.rows_by_iid and self.tree.exists(orig_iid):
             self.tree.item(orig_iid, text=row["name"],

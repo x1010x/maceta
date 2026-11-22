@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.49
+
+- **Las sustituidas se recuerdan entre reinicios.** El estado «✓
+  sustituido» solo vivía en memoria, así que al cerrar Maceta las
+  canciones sustituidas perdían la marca y volvían a contarse como una
+  canción más. Ahora se guarda en el índice (por huella de contenido):
+  reinicies cuando reinicies, siguen en el chip «Sustituidas» hasta que
+  las reanalices tú.
+
 ## 0.4.48
 
 - **Arreglado: las canciones sustituidas no salían en el chip
