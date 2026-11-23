@@ -3,6 +3,26 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.50
+
+- **Reproductor con barra para moverte por la canción.** Antes dependía
+  de `ffplay` (que no siempre viene con ffmpeg) y no dejaba avanzar ni
+  retroceder. Ahora decodifica con ffmpeg y reproduce con control de
+  posición: en el diálogo **Comparar**, cada versión tiene su barra, así
+  puedes saltar al mismo punto de las dos y comparar de verdad. Si falta
+  la librería de sonido, cae a `afplay` (nativo de macOS) sin barra.
+- **El selector de calidad ya no se abre vacío.** Cuando forzabas elegir
+  a mano pero ningún resultado pasaba el filtro, salía un diálogo sin
+  nada. Ahora te dice "ninguno pasa el filtro, nada que elegir" en vez
+  de abrirlo.
+- **Búsquedas en cian**: las que han terminado, tienen resultados
+  aceptables, pero aún no has bajado ninguna. Antes salían en negro,
+  indistinguibles de las que siguen en curso. Verde = bajada, cian =
+  lista para que elijas, rojo = nadie respondió, ámbar = todo filtrado.
+- **Estadísticas "Si fuera física"**: cuántos CDs, cintas (C-90),
+  vinilos y MiniDiscs ocuparía tu colección, la altura de la torre de
+  CDs, lo que pesaría, y cuántos CDs llenaría cada categoría.
+
 ## 0.4.49
 
 - **Las sustituidas se recuerdan entre reinicios.** El estado «✓

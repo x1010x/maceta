@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.49"
+VERSION = "0.4.50"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2160,6 +2160,49 @@ def compute_library_stats(rows: list) -> list:
                      True))
     secciones.append(("📂 Carpetas", carp))
 
+    # ---------- si tu colección fuera física ----------
+    # Duraciones típicas de cada soporte, en minutos.
+    CD_MIN = 74        # CD-Audio estándar
+    CINTA_MIN = 90     # cassette C-90 (45 por cara)
+    VINILO_MIN = 44    # LP de 12", ~22 por cara
+    MINIDISC_MIN = 74
+    dur_min = dur_total / 60.0
+    import math
+    fis = [
+        ("💿 CDs (74 min)", "%d discos" % math.ceil(dur_min / CD_MIN), True),
+        ("📼 Cintas (C-90)", "%d cassettes" % math.ceil(dur_min / CINTA_MIN), True),
+        ("🟤 Vinilos (LP)", "%d elepés" % math.ceil(dur_min / VINILO_MIN), True),
+        ("💾 MiniDiscs", "%d" % math.ceil(dur_min / MINIDISC_MIN), True),
+    ]
+    # Altura de la pila de CDs (cada caja ~10 mm) y de vinilos (~3 mm el disco)
+    n_cd = math.ceil(dur_min / CD_MIN)
+    fis.append(("📏 Torre de CDs en cajas", "%.1f m de alto" % (n_cd * 0.01), True))
+    # Peso aproximado de la colección en CDs (~100 g con caja)
+    fis.append(("⚖ Pesarían en CDs", "%.1f kg" % (n_cd * 0.1), True))
+    # Cuántos CDs por categoría (carpeta de primer nivel bajo la raíz).
+    # La raíz es el ancestro común de todas las canciones.
+    try:
+        base = Path(os.path.commonpath([r["path"] for r in rows]))
+    except Exception:
+        base = None
+    cat_dur = {}
+    for r in rows:
+        p = Path(r["path"])
+        cat = "(raíz)"
+        if base is not None:
+            try:
+                rel = p.relative_to(base)
+                cat = rel.parts[0] if len(rel.parts) > 1 else "(raíz)"
+            except ValueError:
+                cat = "(fuera)"
+        cat_dur[cat] = cat_dur.get(cat, 0) + (r.get("duration_s") or 0)
+    top_cat = sorted(cat_dur.items(), key=lambda kv: -kv[1])[:6]
+    for cat, d in top_cat:
+        cds = math.ceil(d / 60.0 / CD_MIN)
+        fis.append(("   💿 %s" % cat[:34],
+                    "%d CDs (%s)" % (cds, _fmt_dur_long(d)), False))
+    secciones.append(("💿 Si fuera física", fis))
+
     # ---------- artistas y frikadas ----------
     artistas, titulos = {}, {}
     for r in rows:
@@ -2341,6 +2384,158 @@ def save_colors(colors: dict) -> None:
     save_config(cfg)
 
 
+class AudioPlayer:
+    """Reproductor con control de posición para barras de scrubbing.
+
+    Decodifica el fichero con ffmpeg a PCM (soporta cualquier formato que
+    Maceta ya analiza) y lo reproduce con sounddevice, que permite
+    empezar desde cualquier punto — eso es lo que da el seek. Si
+    sounddevice no está, cae a `afplay` (nativo de macOS, sin barra).
+
+    Un solo AudioPlayer suena a la vez: play() de otro instancia para el
+    anterior, para no solapar audios ni pelear por la tarjeta.
+    """
+
+    _activo = None   # el que está sonando ahora mismo, sea quien sea
+
+    def __init__(self, ffmpeg=None):
+        self.ffmpeg = ffmpeg
+        self.data = None          # numpy (N, canales) float32
+        self.sr = 44100
+        self.path = None
+        self._pos0 = 0            # frame donde empezó el tramo actual
+        self._t0 = None           # time.monotonic al arrancar el tramo
+        self._paused_frame = 0
+        self._afplay = None       # subproceso de afplay (fallback)
+
+    # ---- backend ----
+    @staticmethod
+    def _sd():
+        try:
+            import sounddevice as sd
+            return sd
+        except Exception:
+            return None
+
+    def disponible_seek(self) -> bool:
+        return self._sd() is not None
+
+    # ---- carga ----
+    def load(self, path) -> bool:
+        if self.path == str(path) and self.data is not None:
+            return True
+        self.stop()
+        self.path = str(path)
+        self.data = None
+        sd = self._sd()
+        ff = self.ffmpeg
+        if sd is None or not ff:
+            return False      # sin seek: se usará afplay al reproducir
+        try:
+            import numpy as np
+            out = subprocess.run(
+                [ff, "-v", "quiet", "-i", self.path,
+                 "-f", "f32le", "-ac", "2", "-ar", str(self.sr), "-"],
+                capture_output=True)
+            arr = np.frombuffer(out.stdout, dtype=np.float32)
+            if arr.size == 0:
+                self.data = None
+                return False
+            self.data = arr.reshape(-1, 2)
+            return True
+        except Exception as e:
+            log.warning("AudioPlayer.load: %s", e)
+            self.data = None
+            return False
+
+    @property
+    def duration(self) -> float:
+        if self.data is not None:
+            return len(self.data) / self.sr
+        return 0.0
+
+    # ---- control ----
+    def play(self, from_sec=None):
+        sd = self._sd()
+        if AudioPlayer._activo is not None and AudioPlayer._activo is not self:
+            AudioPlayer._activo.stop()
+        if self.data is not None and sd is not None:
+            if from_sec is None:
+                from_sec = self._paused_frame / self.sr
+            frame = max(0, min(len(self.data) - 1, int(from_sec * self.sr)))
+            try:
+                sd.stop()
+                sd.play(self.data[frame:], self.sr)
+            except Exception as e:
+                log.warning("AudioPlayer.play: %s", e)
+                return
+            self._pos0 = frame
+            self._t0 = time.monotonic()
+            AudioPlayer._activo = self
+            return
+        # ---- fallback afplay (sin seek) ----
+        self._stop_afplay()
+        try:
+            self._afplay = subprocess.Popen(
+                ["afplay", self.path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self._t0 = time.monotonic()
+            self._pos0 = 0
+            AudioPlayer._activo = self
+        except Exception as e:
+            log.warning("afplay: %s", e)
+
+    def pause(self):
+        self._paused_frame = int(self.position * self.sr)
+        self._detener_salida()
+
+    def stop(self):
+        self._paused_frame = 0
+        self._detener_salida()
+
+    def seek(self, sec):
+        sonaba = self.is_playing
+        self._paused_frame = max(0, int(sec * self.sr))
+        if sonaba:
+            self.play(sec)
+
+    def _detener_salida(self):
+        sd = self._sd()
+        if sd is not None:
+            try: sd.stop()
+            except Exception: pass
+        self._stop_afplay()
+        self._t0 = None
+        if AudioPlayer._activo is self:
+            AudioPlayer._activo = None
+
+    def _stop_afplay(self):
+        if self._afplay:
+            try:
+                self._afplay.terminate()
+                self._afplay.wait(timeout=1)
+            except Exception:
+                try: self._afplay.kill()
+                except Exception: pass
+            self._afplay = None
+
+    @property
+    def is_playing(self) -> bool:
+        if self._afplay is not None:
+            return self._afplay.poll() is None
+        return (AudioPlayer._activo is self and self._t0 is not None
+                and self.position < self.duration)
+
+    @property
+    def position(self) -> float:
+        if self._t0 is None:
+            return self._paused_frame / self.sr
+        trans = time.monotonic() - self._t0
+        if self.data is not None:
+            return min(self.duration, self._pos0 / self.sr + trans)
+        return trans
+
+
 class MacetaApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -2438,6 +2633,7 @@ class MacetaApp(tk.Tk):
         self._fetching_sid = None
         self._player_proc = None
         self._player_path = None
+        self._player = AudioPlayer(self._find_ffmpeg())
         self.now_playing_var = tk.StringVar(value="—")
         self.colors = load_colors()
         self._themed_widgets: dict = {}  # role -> widget o [widgets]
@@ -4066,6 +4262,10 @@ class MacetaApp(tk.Tk):
         self.search_tree.tag_configure("nores", foreground="#d04a3f")
         self.search_tree.tag_configure("filtered", foreground="#c9890a")
         self.search_tree.tag_configure("done", foreground="#1a7f37")
+        # Completada, con resultados aceptables, pero aún no has bajado
+        # ninguna: hay cosa que elegir aquí. Cian para que no se confunda
+        # con las que siguen en curso (negro).
+        self.search_tree.tag_configure("pendiente", foreground="#2aa6c0")
         self._search_usable = {}
         # #N que ya han terminado de bajar. Se acumula y no se vacía:
         # limpiar la lista de descargas de slskd no debe perder el verde.
@@ -5328,13 +5528,17 @@ class MacetaApp(tk.Tk):
             state_s = str(s.get("state", ""))
             rc = s.get("responseCount") or 0
             usable = self._search_usable.get(sid)
+            completada = "Completed" in state_s
             tag2 = ""
             if n and n in self._completed_nums:
                 tag2 = "done"          # ya bajada: manda sobre lo demás
-            elif "Completed" in state_s and rc == 0:
+            elif completada and rc == 0:
                 tag2 = "nores"
             elif usable == 0 and (s.get("fileCount") or 0):
                 tag2 = "filtered"
+            elif completada and rc:
+                # terminó, tiene respuestas y no has bajado nada: a elegir.
+                tag2 = "pendiente"
             tags = (sid, tag2) if tag2 else (sid,)
             iid = self._activity_search_iids.get(sid)
             if iid and self.search_tree.exists(iid):
@@ -6529,25 +6733,16 @@ class MacetaApp(tk.Tk):
             messagebox.showerror("Maceta", f"El fichero no existe:\n{path}")
             return
         self.on_stop_playback()
-        ffplay = self._find_ffplay()
-        if not ffplay:
+        if not self._find_ffmpeg() and not shutil.which("afplay"):
             messagebox.showerror(
-                "Maceta",
-                "ffplay no encontrado. Viene con ffmpeg — instala ffmpeg.",
-            )
+                "Maceta", "No hay forma de reproducir: falta ffmpeg.")
             return
-        try:
-            self._player_proc = subprocess.Popen(
-                [ffplay, "-autoexit", "-nodisp", "-loglevel", "quiet", path],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-            )
-            self._player_path = path
-            self.now_playing_var.set(f"▶ {label or Path(path).name}")
-            self.status.set(f"▶ {label or Path(path).name}")
-            self.after(500, self._player_poll)
-        except Exception as e:
-            messagebox.showerror("Maceta", f"No se pudo reproducir: {e}")
+        self._player.load(path)
+        self._player.play(0)
+        self._player_path = path
+        self.now_playing_var.set(f"▶ {label or Path(path).name}")
+        self.status.set(f"▶ {label or Path(path).name}")
+        self.after(500, self._player_poll)
 
     def on_play_selected(self):
         sel = list(self.tree.selection())
@@ -6560,27 +6755,20 @@ class MacetaApp(tk.Tk):
         self.play_path(row["path"], row["name"])
 
     def on_stop_playback(self):
-        if self._player_proc:
-            try:
-                self._player_proc.terminate()
-                try:
-                    self._player_proc.wait(timeout=1)
-                except Exception:
-                    self._player_proc.kill()
-            except Exception:
-                pass
+        try:
+            self._player.stop()
+        except Exception:
+            pass
         self._player_proc = None
         self._player_path = None
         self.now_playing_var.set("—")
 
     def _player_poll(self):
-        if self._player_proc and self._player_proc.poll() is not None:
-            # Terminó solo (fin de canción)
-            self._player_proc = None
+        if self._player_path and not self._player.is_playing:
             self._player_path = None
             self.now_playing_var.set("—")
             return
-        if self._player_proc:
+        if self._player_path:
             self.after(500, self._player_poll)
 
     def _on_close(self):
@@ -7188,6 +7376,19 @@ class MacetaApp(tk.Tk):
             self.after(0, self.progress.set, done / total * 100)
         self.after(0, self._slsk_batch_done, total)
 
+    def _acceptable_count(self, responses, min_br):
+        """Cuántos ficheros pasarían el filtro — lo que el picker
+        mostraría de verdad. Sirve para no abrir un selector vacío."""
+        filters = self._search_filters()
+        n = 0
+        for resp in responses or []:
+            if peer_rejection_reason(resp, filters):
+                continue
+            for f in (resp.get("files") or []):
+                if is_acceptable(f, min_bitrate=min_br, filters=filters):
+                    n += 1
+        return n
+
     def _slsk_search_download(self, client, query, allow_picker=False,
                               link_iid=None, force_picker=False):
         """Busca en Soulseek, encola descarga.
@@ -7252,6 +7453,14 @@ class MacetaApp(tk.Tk):
             if pick is not None:
                 want_picker = False
                 auto_note = " · exacta"
+        if want_picker and self._acceptable_count(responses, min_br) == 0:
+            # El selector saldría vacío: no hay ningún fichero que pase el
+            # filtro. Mejor decirlo que abrir un diálogo sin nada.
+            n_files = sum(len(r.get("files") or []) for r in responses or [])
+            if not responses:
+                return False, "nadie respondió"
+            return False, (f"{n_files} ficheros, ninguno pasa el filtro "
+                           f"(min {min_br} kbps) — nada que elegir")
         if want_picker:
             box = {}
             def _open():
@@ -7454,11 +7663,14 @@ class CompareDialog(tk.Toplevel):
         body.columnconfigure(1, weight=1, uniform="pane")
         body.rowconfigure(0, weight=1)
 
+        self._players = {}
         self._panels = {}
         self._panels["orig"] = self._make_side_panel(
-            body, 0, orig_label, self.orig_path, accent="#a33")
+            body, 0, orig_label, self.orig_path, accent="#a33",
+            side_key="orig")
         self._panels["cand"] = self._make_side_panel(
-            body, 1, cand_label, self.cand_path, accent="#2a6")
+            body, 1, cand_label, self.cand_path, accent="#2a6",
+            side_key="cand")
 
         btns = ttk.Frame(self, padding=10)
         btns.pack(fill=tk.X, side=tk.BOTTOM)
@@ -7475,7 +7687,8 @@ class CompareDialog(tk.Toplevel):
                 args=(side, path), daemon=True,
             ).start()
 
-    def _make_side_panel(self, parent, col, label, path, accent):
+    def _make_side_panel(self, parent, col, label, path, accent,
+                         side_key="x"):
         frame = ttk.LabelFrame(parent, text=label, padding=8)
         frame.grid(row=0, column=col, sticky="nsew", padx=6)
         frame.rowconfigure(2, weight=1)
@@ -7515,15 +7728,46 @@ class CompareDialog(tk.Toplevel):
         canvas.get_tk_widget().grid(row=2, column=0, sticky="nsew")
         canvas.draw()
 
-        # Player
+        # Reproductor con barra para moverse y comparar el mismo punto
+        # en las dos versiones.
         player = ttk.Frame(frame)
         player.grid(row=3, column=0, sticky="ew", pady=(6, 0))
-        ttk.Button(player, text="▶ Reproducir",
-                   command=lambda: self.app.play_path(path, Path(path).name)
-                   ).pack(side=tk.LEFT)
-        ttk.Button(player, text="⏹ Parar",
-                   command=self.app.on_stop_playback
-                   ).pack(side=tk.LEFT, padx=6)
+        pl = AudioPlayer(self.app._find_ffmpeg())
+        play_var = tk.StringVar(value="▶")
+        pos_var = tk.DoubleVar(value=0.0)
+        time_var = tk.StringVar(value="0:00 / 0:00")
+
+        def _toggle():
+            if pl.is_playing:
+                pl.pause(); play_var.set("▶")
+            else:
+                if pl.data is None and not pl.load(path):
+                    # sin seek: afplay desde el principio
+                    pl.play(0)
+                else:
+                    pl.play()
+                play_var.set("⏸")
+                self._tick_player(side_key)
+
+        def _seek(v):
+            if pl.duration:
+                pl.seek(float(v) / 1000.0 * pl.duration)
+
+        btn = ttk.Button(player, textvariable=play_var, width=3,
+                         command=_toggle)
+        btn.pack(side=tk.LEFT)
+        slider = ttk.Scale(player, from_=0, to=1000, variable=pos_var,
+                           command=lambda v: None)
+        slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
+        # arrastrar la barra = saltar a ese punto
+        slider.bind("<ButtonRelease-1>",
+                    lambda e: _seek(pos_var.get()))
+        slider.bind("<B1-Motion>", lambda e: setattr(self, "_dragging_"+side_key, True))
+        ttk.Label(player, textvariable=time_var,
+                  foreground="#888").pack(side=tk.LEFT)
+        self._players[side_key] = {
+            "pl": pl, "play_var": play_var, "pos_var": pos_var,
+            "time_var": time_var, "slider": slider}
 
         # Verdict local (lo rellena el hilo)
         verdict_var = tk.StringVar(value="…")
@@ -7534,6 +7778,28 @@ class CompareDialog(tk.Toplevel):
         return {"figure": fig, "ax": ax, "canvas": canvas,
                 "meta": meta, "verdict_var": verdict_var,
                 "info_lbl": info_lbl}
+
+    def _fmt_t(self, sec):
+        sec = int(sec or 0)
+        return f"{sec // 60}:{sec % 60:02d}"
+
+    def _tick_player(self, side_key):
+        d = self._players.get(side_key)
+        if not d:
+            return
+        pl = d["pl"]
+        dur = pl.duration or 0
+        pos = pl.position
+        if dur and not getattr(self, "_dragging_" + side_key, False):
+            d["pos_var"].set(pos / dur * 1000.0)
+        d["time_var"].set(f"{self._fmt_t(pos)} / {self._fmt_t(dur)}")
+        if not pl.is_playing:
+            d["play_var"].set("▶")
+            if dur and pos >= dur - 0.3:
+                d["pos_var"].set(0.0)
+            return
+        setattr(self, "_dragging_" + side_key, False)
+        self.after(200, self._tick_player, side_key)
 
     def _compute_spectrum_thread(self, side, path):
         try:
@@ -7602,6 +7868,9 @@ class CompareDialog(tk.Toplevel):
         panel["verdict_var"].set(f"error: {err[:60]}")
 
     def _cancel(self):
+        for d in getattr(self, "_players", {}).values():
+            try: d["pl"].stop()
+            except Exception: pass
         try:
             self.app.on_stop_playback()
         except Exception:
