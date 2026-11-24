@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.66
+
+- **Importar de Spotify ahora avisa de lo que ya tienes.** Al traer los
+  temas de una playlist, Maceta comprueba cuáles ya están en tu biblioteca:
+  los marca en **amarillo** con el fichero que coincide (para que compares)
+  y los deja **deseleccionados**. Los que te faltan quedan seleccionados.
+  Tú eliges qué añadir con «➕ Añadir seleccionados» — por defecto solo baja
+  lo que no tienes.
+
 ## 0.4.65
 
 - **Importar playlists de Spotify.** Nuevo botón 🎧 en *Actividad Soulseek*

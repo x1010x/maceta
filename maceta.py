@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.65"
+VERSION = "0.4.66"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2903,6 +2903,28 @@ def spotify_parse_url(url: str):
     return None
 
 
+def wishlist_lib_match(artista: str, titulo: str, lib_index: list,
+                       thr: float = 0.70):
+    """¿Este tema (artista, título) ya está en la biblioteca? `lib_index`
+    es [(set_de_tokens, nombre_fichero), ...] precomputado. Devuelve el
+    nombre del fichero que más se parece, o None si ninguno pasa `thr`.
+    Compara por solape de palabras (rápido y tolerante a orden/símbolos)."""
+    want = {w for w in re.findall(r"[a-z0-9]+",
+                                  f"{artista} {titulo}".lower())
+            if len(w) > 1}
+    if not want:
+        return None
+    best, best_name = 0.0, None
+    for toks, name in lib_index:
+        inter = len(want & toks)
+        if not inter:
+            continue
+        score = inter / len(want)
+        if score > best:
+            best, best_name = score, name
+    return best_name if best >= thr else None
+
+
 def _spotify_first_artist(subtitle: str) -> str:
     """El subtítulo de Spotify lista los artistas separados por coma (con
     espacio duro). Nos quedamos con el primero para la búsqueda."""
@@ -2971,9 +2993,9 @@ class SpotifyImportDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Importar de Spotify")
-        self.geometry("620x520")
+        self.geometry("640x540")
         self.transient(app)
-        self._tracks = []
+        self._meta = []
 
         ttk.Label(self, padding=(12, 10, 12, 2), justify="left",
                   wraplength=580, foreground="#888",
@@ -3005,7 +3027,7 @@ class SpotifyImportDialog(tk.Toplevel):
 
         btns = ttk.Frame(self, padding=(12, 4, 12, 12))
         btns.pack(fill=tk.X)
-        self.add_btn = ttk.Button(btns, text="➕ Añadir a la cola",
+        self.add_btn = ttk.Button(btns, text="➕ Añadir seleccionados",
                                   command=self._add, state=tk.DISABLED)
         self.add_btn.pack(side=tk.LEFT)
         ttk.Button(btns, text="Cerrar",
@@ -3035,25 +3057,44 @@ class SpotifyImportDialog(tk.Toplevel):
                     tracks.append((artista, titulo))
             except ValueError as e:
                 errores.append(str(e))
-        self.app.after(0, self._fetch_done, tracks, errores)
-
-    def _fetch_done(self, tracks, errores):
-        self._tracks = tracks
-        self.listbox.delete(0, tk.END)
+        lib_index = self.app.build_name_index()
+        meta = []
         for artista, titulo in tracks:
-            etiqueta = f"{artista} — {titulo}" if artista else titulo
-            self.listbox.insert(tk.END, etiqueta)
-        msg = f"{len(tracks)} temas"
+            match = wishlist_lib_match(artista, titulo, lib_index)
+            meta.append((artista, titulo, match))
+        self.app.after(0, self._fetch_done, meta, errores)
+
+    def _fetch_done(self, meta, errores):
+        self._meta = meta        # [(artista, titulo, match_o_None), ...]
+        self.listbox.delete(0, tk.END)
+        ya = 0
+        for i, (artista, titulo, match) in enumerate(meta):
+            base = f"{artista} — {titulo}" if artista else titulo
+            if match:
+                ya += 1
+                self.listbox.insert(tk.END, f"⚠ {base}   (ya tienes: {match})")
+                self.listbox.itemconfig(i, foreground="#b07a00")
+            else:
+                self.listbox.insert(tk.END, base)
+                self.listbox.selection_set(i)   # preselecciona los que faltan
+        msg = f"{len(meta)} temas"
+        if ya:
+            msg += f" · ⚠ {ya} ya en biblioteca (en amarillo, deseleccionados)"
         if errores:
             msg += f" · {len(errores)} enlace(s) con problema"
         self.info.configure(text=msg)
         self.add_btn.configure(
-            state=(tk.NORMAL if tracks else tk.DISABLED))
+            state=(tk.NORMAL if meta else tk.DISABLED))
 
     def _add(self):
-        if not self._tracks:
+        sel = list(self.listbox.curselection())
+        if not sel:
+            self.info.configure(text="Selecciona al menos un tema "
+                                     "(los amarillos ya los tienes).")
             return
-        n = self.app._enqueue_wishlist(self._tracks)
+        chosen = [(self._meta[i][0], self._meta[i][1]) for i in sel
+                  if i < len(self._meta)]
+        n = self.app._enqueue_wishlist(chosen)
         if n:
             self.info.configure(text=f"✓ {n} añadidos a la cola")
             self.destroy()
@@ -8027,6 +8068,19 @@ class MacetaApp(tk.Tk):
             self._search_running = True
             threading.Thread(target=self._search_queue_worker,
                              args=(client,), daemon=True).start()
+
+    def build_name_index(self):
+        """[(set_de_tokens, nombre), ...] de los nombres de Biblioteca, para
+        detectar rápido si un tema de Spotify ya lo tienes."""
+        idx = []
+        for row in self.rows_by_iid.values():
+            name = row.get("name") or ""
+            stem = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", name)
+            toks = frozenset(w for w in re.findall(r"[a-z0-9]+", stem.lower())
+                             if len(w) > 1)
+            if toks:
+                idx.append((toks, name))
+        return idx
 
     def on_spotify_import(self):
         if self._slsk_client() is None:
