@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.58"
+VERSION = "0.4.59"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2967,6 +2967,8 @@ class MacetaApp(tk.Tk):
         self._dl_num: dict[tuple, int] = {}    # (user, filename_lc) -> #N
         self._search_link_iid: dict[str, str] = {}  # sid -> orig iid
         self._scan_gen = 0
+        self._batch_total = 0      # canciones mandadas a buscar en el lote
+        self._batch_done = 0       # ya procesadas del lote
         self._results_current_sid = None
         self._fetching_sid = None
         self._player_proc = None
@@ -6067,6 +6069,8 @@ class MacetaApp(tk.Tk):
 
     def _update_activity_stats(self, searches, downloads):
         """Resumen de la pestaña, al estilo de los chips de Biblioteca."""
+        self._last_searches = searches
+        self._last_downloads = downloads
         total_s = len(searches)
         buscando = sum(1 for s in searches
                        if "Completed" not in str(s.get("state", "")))
@@ -6081,8 +6085,12 @@ class MacetaApp(tk.Tk):
         def pct(n, t):
             return f" ({100 * n / t:.0f}%)" if t else ""
 
-        if total_s:
+        por_buscar = max(0, self._batch_total - self._batch_done)
+        cola = (f"📤 {por_buscar} por buscar (de {self._batch_total}) · "
+                if por_buscar else "")
+        if total_s or por_buscar:
             self.act_search_stats.set(
+                cola +
                 f"🔎 {total_s} búsquedas · ⏳ {buscando} en curso · "
                 f"✅ {con_resp} con respuesta{pct(con_resp, total_s)} · "
                 f"🚫 {sin_nada} sin nada · ⚠ {filtradas} filtradas")
@@ -7821,6 +7829,9 @@ class MacetaApp(tk.Tk):
 
         # Búsquedas secuenciales — el paralelismo saturaba slskd y hacía
         # que el hilo principal esperase en llamadas HTTP encadenadas.
+        # Acumula al lote en curso (puede haber varios encadenados).
+        self._batch_total += total
+        self.after(0, self._refresh_activity_stats_soft)
         done = 0
         for iid, row in candidates:
             try:
@@ -7833,7 +7844,9 @@ class MacetaApp(tk.Tk):
                 self.after(0, self._set_slsk_status, iid, f"✗ {text}")
                 self._release_active(iid)
             done += 1
+            self._batch_done += 1
             self.after(0, self.progress.set, done / total * 100)
+            self.after(0, self._refresh_activity_stats_soft)
         self.after(0, self._slsk_batch_done, total)
 
     def _acceptable_count(self, responses, min_br):
@@ -7996,7 +8009,22 @@ class MacetaApp(tk.Tk):
         self._schedule_filter_refresh()
         self._maybe_schedule_retry(iid, text)
 
+    def _refresh_activity_stats_soft(self):
+        """Repinta solo el resumen (barato), sin tocar slskd. Lo llama el
+        lote de búsqueda para que el contador 'por buscar' baje en vivo."""
+        if self._batch_done >= self._batch_total:
+            self._batch_total = self._batch_done = 0
+        try:
+            self._update_activity_stats(
+                getattr(self, "_last_searches", []),
+                getattr(self, "_last_downloads", []))
+        except Exception:
+            pass
+
     def _slsk_batch_done(self, total):
+        if self._batch_done >= self._batch_total:
+            self._batch_total = self._batch_done = 0
+        self._refresh_activity_stats_soft()
         queued = sum(1 for r in self.rows_by_iid.values()
                      if (r.get("slsk_status") or "").startswith("↓"))
         self.status.set(

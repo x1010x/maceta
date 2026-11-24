@@ -3,6 +3,14 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.59
+
+- **Contador «por buscar»** en el resumen de Actividad Soulseek. Cuando
+  mandas muchas canciones a buscar desde Biblioteca (p. ej. todos los
+  FAKE), Maceta las busca de una en una (cada búsqueda tarda su rato), y
+  ahora ves cuántas quedan: *«📤 38 por buscar (de 50)»*. Baja en vivo y
+  desaparece al terminar.
+
 ## 0.4.58
 
 - **Arreglado: canciones que volvían a «sin analizar» al reabrir.** El
