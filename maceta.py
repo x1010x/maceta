@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.64"
+VERSION = "0.4.65"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2885,6 +2885,180 @@ class AudioPlayer:
         return trans
 
 
+SPOTIFY_URL_RE = re.compile(
+    r"open\.spotify\.com/(?:intl-[a-z]{2}/)?(playlist|album|track)/"
+    r"([A-Za-z0-9]+)")
+
+
+def spotify_parse_url(url: str):
+    """De una URL/URI de Spotify saca (tipo, id) o None.
+    Acepta https://open.spotify.com/... y spotify:playlist:ID."""
+    url = (url or "").strip()
+    m = SPOTIFY_URL_RE.search(url)
+    if m:
+        return m.group(1), m.group(2)
+    m = re.match(r"spotify:(playlist|album|track):([A-Za-z0-9]+)", url)
+    if m:
+        return m.group(1), m.group(2)
+    return None
+
+
+def _spotify_first_artist(subtitle: str) -> str:
+    """El subtítulo de Spotify lista los artistas separados por coma (con
+    espacio duro). Nos quedamos con el primero para la búsqueda."""
+    s = (subtitle or "").replace("\xa0", " ")
+    return re.split(r"\s*[,;]\s*", s)[0].strip()
+
+
+def spotify_fetch_tracks(url: str, timeout: float = 15.0) -> list:
+    """Devuelve [(artista, titulo), ...] de una playlist/álbum/track público
+    de Spotify, usando el endpoint embed (sin credenciales ni registro).
+
+    Lanza ValueError con un motivo claro si la URL no vale o no se puede
+    leer. Nota: el embed puede truncar playlists muy grandes."""
+    parsed = spotify_parse_url(url)
+    if not parsed:
+        raise ValueError("No parece un enlace de Spotify "
+                         "(playlist/álbum/canción).")
+    kind, sid = parsed
+    embed = f"https://open.spotify.com/embed/{kind}/{sid}"
+    try:
+        r = requests.get(embed, timeout=timeout, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/122.0 Safari/537.36"})
+        r.raise_for_status()
+    except requests.RequestException as e:
+        raise ValueError(f"No se pudo conectar con Spotify: {e}")
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+                  r.text, re.S)
+    if not m:
+        raise ValueError("Spotify no devolvió datos (¿enlace privado?).")
+    try:
+        data = json.loads(m.group(1))
+    except json.JSONDecodeError:
+        raise ValueError("Respuesta de Spotify ilegible.")
+
+    ent = (((data.get("props") or {}).get("pageProps") or {})
+           .get("state") or {}).get("data", {}).get("entity") or {}
+    tracks = []
+    tl = ent.get("trackList")
+    if isinstance(tl, list) and tl:
+        for t in tl:
+            titulo = (t.get("title") or "").strip()
+            artista = _spotify_first_artist(t.get("subtitle"))
+            if titulo:
+                tracks.append((artista, titulo))
+    elif ent.get("title"):
+        artists = ent.get("artists") or []
+        if artists:
+            artista = (artists[0].get("name") or "").strip()
+        else:
+            artista = _spotify_first_artist(ent.get("subtitle"))
+        tracks.append((artista, ent["title"].strip()))
+    if not tracks:
+        raise ValueError("No se encontraron canciones en ese enlace "
+                         "(¿privado o vacío?).")
+    return tracks
+
+
+class SpotifyImportDialog(tk.Toplevel):
+    """Pega enlaces de Spotify (playlist/álbum/canción) y mete sus temas en
+    la cola de búsqueda de Soulseek — como una lista de deseos: se bajan a
+    la carpeta de descargas."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Importar de Spotify")
+        self.geometry("620x520")
+        self.transient(app)
+        self._tracks = []
+
+        ttk.Label(self, padding=(12, 10, 12, 2), justify="left",
+                  wraplength=580, foreground="#888",
+                  text="Pega uno o varios enlaces de Spotify (una playlist, "
+                       "álbum o canción por línea). Maceta saca los temas y "
+                       "los pone en la cola para bajarlos de Soulseek.").pack(
+            fill=tk.X)
+
+        self.txt = tk.Text(self, height=4, wrap="word")
+        self.txt.pack(fill=tk.X, padx=12, pady=(4, 4))
+        self.txt.insert("1.0", "")
+        self.txt.focus_set()
+
+        row = ttk.Frame(self, padding=(12, 0))
+        row.pack(fill=tk.X)
+        ttk.Button(row, text="🎧 Traer temas",
+                   command=self._fetch).pack(side=tk.LEFT)
+        self.info = ttk.Label(row, text="", foreground="#888")
+        self.info.pack(side=tk.LEFT, padx=10)
+
+        wrap = ttk.Frame(self, padding=(12, 6))
+        wrap.pack(fill=tk.BOTH, expand=True)
+        self.listbox = tk.Listbox(wrap, selectmode=tk.EXTENDED)
+        vsb = ttk.Scrollbar(wrap, orient="vertical",
+                            command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=vsb.set)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btns = ttk.Frame(self, padding=(12, 4, 12, 12))
+        btns.pack(fill=tk.X)
+        self.add_btn = ttk.Button(btns, text="➕ Añadir a la cola",
+                                  command=self._add, state=tk.DISABLED)
+        self.add_btn.pack(side=tk.LEFT)
+        ttk.Button(btns, text="Cerrar",
+                   command=self.destroy).pack(side=tk.RIGHT)
+
+    def _fetch(self):
+        urls = [u.strip() for u in self.txt.get("1.0", tk.END).splitlines()
+                if u.strip()]
+        if not urls:
+            self.info.configure(text="Pega al menos un enlace.")
+            return
+        self.info.configure(text="Trayendo de Spotify…")
+        self.add_btn.configure(state=tk.DISABLED)
+        threading.Thread(target=self._fetch_worker, args=(urls,),
+                         daemon=True).start()
+
+    def _fetch_worker(self, urls):
+        tracks, errores = [], []
+        vistos = set()
+        for u in urls:
+            try:
+                for artista, titulo in spotify_fetch_tracks(u):
+                    clave = (artista.lower(), titulo.lower())
+                    if clave in vistos:
+                        continue
+                    vistos.add(clave)
+                    tracks.append((artista, titulo))
+            except ValueError as e:
+                errores.append(str(e))
+        self.app.after(0, self._fetch_done, tracks, errores)
+
+    def _fetch_done(self, tracks, errores):
+        self._tracks = tracks
+        self.listbox.delete(0, tk.END)
+        for artista, titulo in tracks:
+            etiqueta = f"{artista} — {titulo}" if artista else titulo
+            self.listbox.insert(tk.END, etiqueta)
+        msg = f"{len(tracks)} temas"
+        if errores:
+            msg += f" · {len(errores)} enlace(s) con problema"
+        self.info.configure(text=msg)
+        self.add_btn.configure(
+            state=(tk.NORMAL if tracks else tk.DISABLED))
+
+    def _add(self):
+        if not self._tracks:
+            return
+        n = self.app._enqueue_wishlist(self._tracks)
+        if n:
+            self.info.configure(text=f"✓ {n} añadidos a la cola")
+            self.destroy()
+
+
 class MacetaApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -2943,6 +3117,7 @@ class MacetaApp(tk.Tk):
         # iid -> {cands, tried, query, min_br, n}: plan para subir a la
         # siguiente mejor versión si la descargada sigue FAKE.
         self._escalation: dict[str, dict] = {}
+        self._wish_counter = 0     # ids sintéticos para temas de Spotify
         self.restore_last_folder_var = tk.BooleanVar(
             value=us["restore_last_folder"])
         self.use_index_var = tk.BooleanVar(value=us["use_index"])
@@ -4600,6 +4775,9 @@ class MacetaApp(tk.Tk):
                     self.on_search_query, side=tk.LEFT)
         icon_button(search, "🧨", "Cancelar y borrar TODAS las búsquedas y "
                     "descargas", self.on_clear_all_activity,
+                    side=tk.LEFT, padx=(6, 0))
+        icon_button(search, "🎧", "Importar una playlist de Spotify a la "
+                    "cola de descargas", self.on_spotify_import,
                     side=tk.LEFT, padx=(6, 0))
         ttk.Checkbutton(
             search, text="⟳ Rebuscar auto",
@@ -7850,6 +8028,46 @@ class MacetaApp(tk.Tk):
             threading.Thread(target=self._search_queue_worker,
                              args=(client,), daemon=True).start()
 
+    def on_spotify_import(self):
+        if self._slsk_client() is None:
+            messagebox.showwarning(
+                "Maceta", "Configura primero slskd (⚙ Config Soulseek…).")
+            return
+        SpotifyImportDialog(self)
+
+    def _enqueue_wishlist(self, tracks):
+        """Mete temas sueltos (artista, título) en la cola de búsqueda como
+        descargas nuevas (no sustituyen a nada: van a downloads/). Devuelve
+        cuántos se encolaron."""
+        client = self._slsk_client()
+        if client is None:
+            messagebox.showwarning(
+                "Maceta", "Configura primero slskd (⚙ Config Soulseek…).")
+            return 0
+        added = 0
+        for artista, titulo in tracks:
+            titulo_q = re.sub(r"[\(\[].*?[\)\]]", "", titulo).strip()
+            query = f"{artista} {titulo_q}".strip()
+            if not query:
+                continue
+            sid = f"wish:{self._wish_counter}"
+            self._wish_counter += 1
+            nombre = f"{artista} - {titulo}".strip(" -")
+            self.active_by_iid[sid] = "buscando"
+            self._search_queue.append(
+                (sid, {"name": nombre, "path": None}, query, False))
+            added += 1
+        if not added:
+            return 0
+        self._batch_total += added
+        self.status.set(f"{len(self._search_queue)} en cola de búsqueda…")
+        self._refresh_activity_stats_soft()
+        if not self._search_running:
+            self._search_running = True
+            threading.Thread(target=self._search_queue_worker,
+                             args=(client,), daemon=True).start()
+        return added
+
     def cancel_search_queue(self, iids=None):
         """Quita canciones de la cola de búsqueda (las que aún no se han
         lanzado). iids=None → vaciar la cola entera. No cancela la que ya
@@ -8024,7 +8242,8 @@ class MacetaApp(tk.Tk):
                 self.finalized_dl_keys.discard(key)
             return True, f"ya en descargas: {existing.name}"
         tag = self._enqueue_pick(client, link_iid, resp, f, query, n)
-        if link_iid and self.auto_escalate_var.get():
+        if (link_iid and link_iid in self.rows_by_iid
+                and self.auto_escalate_var.get()):
             ranked = ranked_candidates(responses, query, min_br,
                                        self._search_filters())
             if len(ranked) > 1:

@@ -3,6 +3,16 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.65
+
+- **Importar playlists de Spotify.** Nuevo botón 🎧 en *Actividad Soulseek*
+  (junto a la caja de búsqueda): pega el enlace de una playlist, álbum o
+  canción de Spotify, Maceta saca la lista de temas y los mete en la cola
+  para bajarlos de Soulseek — como una lista de deseos. Van a la carpeta de
+  descargas. No necesita cuenta ni registro de Spotify (usa el reproductor
+  público embebido). Playlists muy grandes pueden venir recortadas; verás
+  cuántos temas se encontraron.
+
 ## 0.4.64
 
 - **Las sustituciones automáticas ya aparecen en «Sustituidas» al
