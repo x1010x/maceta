@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.50"
+VERSION = "0.4.51"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -663,6 +663,84 @@ def archive_path_for(original_path: str) -> Path:
         drive, tail = os.path.splitdrive(str(p))
         stripped = drive.rstrip(":") + tail.lstrip("\\").lstrip("/")
     return ARCHIVE_DIR / stripped
+
+
+_TS_RE = re.compile(r"\.\d{10}(\.[a-z0-9]+)$", re.I)
+
+
+def _norm_stem(name: str) -> str:
+    stem = Path(name).stem.lower()
+    stem = re.sub(r"\.\d{10}$", "", stem)
+    stem = re.sub(r"[^a-z0-9]+", " ", stem)
+    return " ".join(w for w in stem.split() if len(w) > 2)
+
+
+def _good_quality(path: str) -> bool:
+    """Lossless, o MP3/M4A a 320 kbps o más."""
+    ext = Path(path).suffix.lower()
+    if ext in (".flac", ".wav", ".aiff"):
+        return True
+    try:
+        mf = MutagenFile(path)
+        br = getattr(getattr(mf, "info", None), "bitrate", 0) or 0
+        return br / 1000.0 >= GOOD_MP3_MIN_BR - 1
+    except Exception:
+        return False
+
+
+def plan_clean_archive() -> dict:
+    """Qué haría una limpieza de archivo/: devuelve las que volverían a
+    su sitio y por qué se saltan las demás. No toca nada.
+
+    Restaura solo las de buena calidad (320+/lossless) que no estén ya
+    en la biblioteca; deja copias con timestamp, baja calidad y las que
+    ya tienen su sitio ocupado."""
+    if not ARCHIVE_DIR.exists():
+        return {"restore": [], "dup": 0, "mala": 0, "ts": 0, "ocupado": 0}
+    archivados = [p for p in ARCHIVE_DIR.rglob("*")
+                  if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS]
+    if not archivados:
+        return {"restore": [], "dup": 0, "mala": 0, "ts": 0, "ocupado": 0}
+
+    def destino(p):
+        rel = p.relative_to(ARCHIVE_DIR)
+        return Path("/" + str(rel))
+
+    destinos = [destino(p) for p in archivados]
+    raiz = Path(os.path.commonpath([str(d) for d in destinos]))
+    presentes = set()
+    for p in raiz.rglob("*"):
+        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS:
+            presentes.add(_norm_stem(p.name))
+
+    restore, dup, mala, ts, ocupado = [], 0, 0, 0, 0
+    for p in archivados:
+        if _TS_RE.search(p.name):
+            ts += 1; continue
+        if _norm_stem(p.name) in presentes:
+            dup += 1; continue
+        if not _good_quality(str(p)):
+            mala += 1; continue
+        d = destino(p)
+        if d.exists():
+            ocupado += 1; continue
+        restore.append((p, d))
+        presentes.add(_norm_stem(p.name))
+    return {"restore": restore, "dup": dup, "mala": mala,
+            "ts": ts, "ocupado": ocupado, "raiz": str(raiz)}
+
+
+def run_clean_archive(plan: dict) -> int:
+    """Mueve de verdad las del plan. Devuelve cuántas restauró."""
+    n = 0
+    for src, dest in plan.get("restore", []):
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+            n += 1
+        except Exception as e:
+            log.warning("restaurar %s falló: %s", src.name, e)
+    return n
 
 
 def substitute_file(original_path: str, downloaded_path: str) -> Path:
@@ -8421,6 +8499,12 @@ OPTION_TABS = [
       "label": "Parecido de audio para sustituir",
       "hint": "Similitud de cromagrama mínima para dar dos ficheros por "
               "la misma canción. Más alto = más estricto."},
+     {"kind": "action", "label": "Carpeta archivo/",
+      "button": "🧹 Limpiar archivo…",
+      "cmd": "clean_archive",
+      "hint": "Devuelve a la biblioteca los originales archivados que "
+              "sean buenos (320+/lossless) y no estén ya duplicados. "
+              "Deja las copias repetidas y las de baja calidad."},
     ]),
     ("Reintentos", [
      {"src": "app", "key": "auto_retry_var", "kind": "bool",
@@ -8681,6 +8765,35 @@ class OptionsDialog(tk.Toplevel):
 
     def _do_colors(self):
         ColorEditorDialog(self.app)
+
+    def _do_clean_archive(self):
+        self._resultado("Analizando archivo/…")
+        self.update_idletasks()
+        plan = plan_clean_archive()
+        restore = plan["restore"]
+        if not restore:
+            self._resultado(
+                "Nada que restaurar: %d duplicadas, %d de baja calidad, "
+                "%d copias." % (plan["dup"], plan["mala"], plan["ts"]),
+                ok=False)
+            return
+        if not messagebox.askyesno(
+            "Maceta",
+            f"Devolver a la biblioteca {len(restore)} canción(es) "
+            f"archivadas?\n\n"
+            f"Se restauran solo las buenas (320+/lossless) y no "
+            f"duplicadas.\n\n"
+            f"Se quedan en archivo/:\n"
+            f"  · {plan['dup']} ya están en la biblioteca\n"
+            f"  · {plan['mala']} por debajo de 320\n"
+            f"  · {plan['ts']} copias repetidas\n\n"
+            "Nada se borra.",
+        ):
+            return
+        n = run_clean_archive(plan)
+        self._resultado(f"✓ {n} canción(es) restauradas a su sitio. "
+                        "Reinicia o re-escanea para verlas.")
+        self.app.status.set(f"archivo/ limpiado: {n} restauradas")
 
     def _do_clear_index(self):
         n = clear_index()

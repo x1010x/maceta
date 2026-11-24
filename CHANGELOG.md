@@ -3,6 +3,14 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.51
+
+- **Botón "🧹 Limpiar archivo…"** en Preferencias → Opciones → Descargas.
+  Devuelve a la biblioteca los originales que Maceta archivó al sustituir
+  y que merece la pena recuperar: buenos (320+ o lossless) y que no estén
+  ya duplicados. Deja en `archivo/` las copias repetidas y las de baja
+  calidad. Dice cuántas restaura y cuántas se quedan, y no borra nada.
+
 ## 0.4.50
 
 - **Reproductor con barra para moverte por la canción.** Antes dependía
