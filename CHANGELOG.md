@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.63
+
+- **Arreglo de la escalada:** cuando una descarga resulta ser *otra*
+  canción («no coincide»), vuelve a ir al bucket **Revisar** (para mirarla
+  a mano) en lugar de re-lanzarse a por otra versión. La escalada
+  automática queda solo para cuando la calidad sigue siendo FAKE/baja, que
+  es lo pedido. (En 0.4.62 el «no coincide» también escalaba y por eso
+  Revisar se quedaba a 0 y las canciones daban vueltas en «En proceso».)
+
 ## 0.4.62
 
 - **Escalada automática ante FAKE.** Si bajas una versión y al analizarla

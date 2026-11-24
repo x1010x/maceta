@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.62"
+VERSION = "0.4.63"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -6243,8 +6243,10 @@ class MacetaApp(tk.Tk):
     def _verify_and_substitute(self, orig_iid, row, local_path):
         match, sim, reason = songs_match(row["path"], local_path)
         if not match:
-            if self._escalate_fake(orig_iid, row, f"no coincide ({reason})"):
-                return
+            # "No coincide" = otra canción: va a Revisar para mirarla a
+            # mano. NO se escala (eso es solo para FAKE/calidad baja), si
+            # no, nunca aparecería nada en Revisar.
+            self._escalation.pop(orig_iid, None)
             self.after(0, self._set_slsk_status, orig_iid,
                        f"✗ no coincide ({reason})")
             self.after(0, self._release_active, orig_iid)
