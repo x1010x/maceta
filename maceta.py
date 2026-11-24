@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.55"
+VERSION = "0.4.56"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -215,9 +215,16 @@ def scan_row(path: str, use_index: bool = True) -> dict:
         "analyzed": False, "slsk_status": "",
     }
     if use_index:
-        sub_reason = index_substituted(path)
-        if sub_reason:
-            base["slsk_status"] = f"✓ sustituido ({sub_reason})"
+        if index_ready(path):
+            codec = (index_meta(path).get("codec") or "").upper()
+            base["verdict"] = "LOSSLESS" if codec in ("FLAC", "WAV") else "OK"
+            base["detail"] = "verificada a mano"
+            base["analyzed"] = True
+            base["slsk_status"] = ""
+        else:
+            sub_reason = index_substituted(path)
+            if sub_reason:
+                base["slsk_status"] = f"✓ sustituido ({sub_reason})"
         meta = index_meta(path)
         if meta:
             base.update({k: meta.get(k) for k in META_FIELDS})
@@ -1039,6 +1046,33 @@ def index_mark_substituted(path: str, reason: str) -> None:
         e["path"] = str(path)
         _paths_map()[str(path)] = digest
         _index_dirty = True
+
+
+def index_mark_ready(path: str) -> None:
+    """Marca una canción como «dada por buena» (verificada a mano): irá a
+    Listas y se queda así entre reinicios. Guarda la huella del fichero
+    para no heredar la marca si lo cambias."""
+    global _index_dirty
+    digest, e = index_entry(path)
+    if not digest:
+        return
+    size, mtime = _file_fingerprint(path)
+    with _index_lock:
+        idx = load_index()
+        if not e:
+            e = {"size": size, "mtime": mtime, "path": str(path)}
+            idx[digest] = e
+        e["ready"] = True
+        e.pop("sub", None)            # ya no es «pendiente», es buena
+        e["path"] = str(path)
+        _paths_map()[str(path)] = digest
+        _index_dirty = True
+
+
+def index_ready(path: str) -> bool:
+    """¿Esta canción fue dada por buena a mano? (valida por huella)."""
+    _d, e = index_entry(path)
+    return bool((e or {}).get("ready"))
 
 
 def index_substituted(path: str) -> str:
@@ -3402,6 +3436,9 @@ class MacetaApp(tk.Tk):
         m.add_command(label="🔄 Re-analizar (ignora el índice)",
                       command=self.on_reanalyze,
                       state=("normal" if row else "disabled"))
+        m.add_command(label="✅ Dar por buena → Listas",
+                      command=self.on_mark_verified,
+                      state=("normal" if row else "disabled"))
         m.add_command(label="Bajar con Soulseek…",
                       command=self.on_slsk_search,
                       state=("normal" if row else "disabled"))
@@ -4012,6 +4049,9 @@ class MacetaApp(tk.Tk):
         self._fakes_btn = icon_button(
             player, "⬇", "Buscar en Soulseek las FAKE",
             self.on_slsk_fakes, side=tk.LEFT, padx=6)
+        icon_button(player, "✅", "Dar por buenas las sustituidas → Listas "
+                    "(ya verificadas, no re-analiza)",
+                    self.on_mark_verified, side=tk.LEFT, padx=6)
         ttk.Separator(player, orient="vertical").pack(
             side=tk.LEFT, fill=tk.Y, padx=8)
         icon_button(player, "🗑", "Mover a archivo/ (no borra de verdad)",
@@ -7587,6 +7627,49 @@ class MacetaApp(tk.Tk):
                 )
                 return
         self._launch_slsk_batch(client, candidates, custom_query=custom_query)
+
+    def on_mark_verified(self):
+        """Mueve a Listas las canciones sustituidas (ya verificadas por
+        audio al sustituir). Sobre la selección si la hay; si no, sobre
+        todas las sustituidas que estás viendo. Se queda entre reinicios.
+        No re-analiza: confías en que la descarga era buena."""
+        sel = [i for i in self.tree.selection() if i in self.rows_by_iid]
+        if sel:
+            objetivo = [i for i in sel
+                        if row_bucket(self.rows_by_iid[i]) == "sustituidas"]
+            if not objetivo:
+                objetivo = sel   # si eliges otras, también valen
+        else:
+            objetivo = [i for i in self._scope_iids()
+                        if row_bucket(self.rows_by_iid[i]) == "sustituidas"]
+        if not objetivo:
+            messagebox.showinfo(
+                "Maceta", "No hay canciones sustituidas que mover a Listas.")
+            return
+        if not messagebox.askyesno(
+            "Maceta",
+            f"Dar por buenas {len(objetivo)} canción(es) y moverlas a "
+            "Listas?\n\nYa pasaron la verificación de audio al "
+            "sustituirlas. No se re-analizan.",
+        ):
+            return
+        for iid in objetivo:
+            row = self.rows_by_iid.get(iid)
+            if not row:
+                continue
+            codec = (row.get("codec") or "").upper()
+            row["verdict"] = "LOSSLESS" if codec in ("FLAC", "WAV") else "OK"
+            row["detail"] = "verificada a mano"
+            row["analyzed"] = True
+            row["slsk_status"] = ""
+            index_mark_ready(row["path"])
+            if self.tree.exists(iid):
+                self.tree.item(iid, values=self._row_values(row),
+                               tags=(row["verdict"],))
+        save_index()
+        self._schedule_filter_refresh()
+        self._schedule_folder_refresh(rebuild=False)
+        self.status.set(f"✓ {len(objetivo)} dadas por buenas → Listas")
 
     def on_slsk_fakes(self):
         client = self._connected_client()

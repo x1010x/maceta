@@ -3,6 +3,16 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.56
+
+- **Botón «✅ Dar por buenas» las sustituidas → Listas.** Las canciones
+  sustituidas ya pasaron la verificación de audio al reemplazarlas, así
+  que ahora puedes moverlas a Listas sin re-analizarlas: un botón en
+  Biblioteca (o botón derecho → «✅ Dar por buena → Listas»). Actúa sobre
+  lo seleccionado, o sobre todas las sustituidas que estés viendo. **Se
+  queda entre reinicios** (antes volvían a aparecer como pendientes al
+  reabrir, porque el fichero sustituido es nuevo y estaba sin analizar).
+
 ## 0.4.55
 
 - **Diagnóstico de Soulseek** (menú Soulseek → 🩺 Diagnóstico de
