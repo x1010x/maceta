@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.67"
+VERSION = "0.4.68"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3063,9 +3063,13 @@ class SpotifyImportDialog(tk.Toplevel):
 
         btns = ttk.Frame(self, padding=(12, 4, 12, 12))
         btns.pack(fill=tk.X)
+        self.missing_btn = ttk.Button(
+            btns, text="➕ Añadir los que faltan",
+            command=self._add_missing, state=tk.DISABLED)
+        self.missing_btn.pack(side=tk.LEFT)
         self.add_btn = ttk.Button(btns, text="➕ Añadir seleccionados",
                                   command=self._add, state=tk.DISABLED)
-        self.add_btn.pack(side=tk.LEFT)
+        self.add_btn.pack(side=tk.LEFT, padx=8)
         ttk.Button(btns, text="Cerrar",
                    command=self.destroy).pack(side=tk.RIGHT)
 
@@ -3119,8 +3123,20 @@ class SpotifyImportDialog(tk.Toplevel):
         if errores:
             msg += f" · {len(errores)} enlace(s) con problema"
         self.info.configure(text=msg)
-        self.add_btn.configure(
-            state=(tk.NORMAL if meta else tk.DISABLED))
+        faltan = any(m is None for _a, _t, m in meta)
+        self.add_btn.configure(state=(tk.NORMAL if meta else tk.DISABLED))
+        self.missing_btn.configure(
+            state=(tk.NORMAL if faltan else tk.DISABLED))
+
+    def _add_missing(self):
+        chosen = [(a, t) for a, t, m in self._meta if m is None]
+        if not chosen:
+            self.info.configure(text="Ya tienes todos: no falta ninguno.")
+            return
+        n = self.app._enqueue_wishlist(chosen)
+        if n:
+            self.info.configure(text=f"✓ {n} añadidos a la cola")
+            self.destroy()
 
     def _add(self):
         sel = list(self.listbox.curselection())

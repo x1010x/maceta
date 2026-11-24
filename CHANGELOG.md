@@ -3,6 +3,12 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.68
+
+- En *Importar de Spotify*, botón nuevo **«➕ Añadir los que faltan»**: mete
+  de golpe todos los temas que NO tienes ya en la biblioteca, sin tener que
+  seleccionarlos a mano. Sigue estando «Añadir seleccionados» para elegir.
+
 ## 0.4.67
 
 - **Nueva pestaña «🎧 Wishlist».** Los temas que importas de Spotify ahora
