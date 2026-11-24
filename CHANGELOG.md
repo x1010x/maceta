@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.57
+
+- **Filtro de búsquedas** en Actividad Soulseek: una caja 🔎 encima del
+  panel de Búsquedas para encontrar una búsqueda entre muchas escribiendo
+  parte de la query (p. ej. «bluetech» deja solo las de ese artista).
+- **🔗 Búsquedas relacionadas** (botón derecho sobre una búsqueda o una
+  descarga): filtra las búsquedas por la palabra distintiva (el artista),
+  para ver de un vistazo todas las relacionadas.
+
 ## 0.4.56
 
 - **Botón «✅ Dar por buenas» las sustituidas → Listas.** Las canciones

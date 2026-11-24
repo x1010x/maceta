@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.56"
+VERSION = "0.4.57"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3483,6 +3483,10 @@ class MacetaApp(tk.Tk):
         m.add_command(label="🔍 Encontrar en Biblioteca",
                       command=self._find_from_search,
                       state=("normal" if has else "disabled"))
+        m.add_command(label="🔗 Búsquedas relacionadas",
+                      command=lambda: self.buscar_relacionadas(
+                          self.search_tree.set(iid, "query") if iid else ""),
+                      state=("normal" if has else "disabled"))
         m.add_separator()
         m.add_command(label="Cancelar",
                       command=self.on_cancel_search,
@@ -3637,6 +3641,10 @@ class MacetaApp(tk.Tk):
             state=("normal" if user else "disabled"))
         m.add_command(label="🔍 Encontrar en Biblioteca",
                       command=self._find_from_downloads,
+                      state=("normal" if has else "disabled"))
+        m.add_command(label="🔗 Búsquedas relacionadas",
+                      command=lambda: self.buscar_relacionadas(
+                          self.dl_tree.set(iid, "file") if iid else ""),
                       state=("normal" if has else "disabled"))
         m.add_separator()
         m.add_command(
@@ -4594,6 +4602,15 @@ class MacetaApp(tk.Tk):
         top_paned.add(s_frame, weight=1)
         s_head = ttk.Frame(s_frame)
         s_head.pack(fill=tk.X)
+        ttk.Label(s_head, text="🔎").pack(side=tk.LEFT)
+        self.search_filter_var = tk.StringVar()
+        fe = ttk.Entry(s_head, textvariable=self.search_filter_var, width=20)
+        fe.pack(side=tk.LEFT, padx=(2, 6))
+        fe.bind("<KeyRelease>", lambda _e: self._apply_search_filter())
+        ttk.Button(s_head, text="✕", width=2,
+                   command=lambda: (self.search_filter_var.set(""),
+                                    self._apply_search_filter())
+                   ).pack(side=tk.LEFT)
         self._font_controls(s_head, lambda: self.search_tree, "searches")
         s_cols = ("num", "query", "state", "responses", "files")
         s_wrap, self.search_tree = make_scrollable_tree(
@@ -5847,6 +5864,38 @@ class MacetaApp(tk.Tk):
         self.after(0, self._activity_reconcile, downloads, local_lookup)
         self.after(4000, self._activity_tick)
 
+    def _apply_search_filter(self):
+        """Oculta las búsquedas cuya query no contiene el texto del filtro.
+        Útil para encontrar las de un artista entre muchas."""
+        q = self.search_filter_var.get().strip().lower()
+        detached = getattr(self, "_search_detached", {})
+        # Reattach todo lo oculto antes de volver a filtrar.
+        for iid in list(detached.keys()):
+            try:
+                self.search_tree.reattach(iid, "", "end")
+            except Exception:
+                pass
+        detached.clear()
+        if q:
+            for iid in list(self.search_tree.get_children("")):
+                if q not in self.search_tree.set(iid, "query").lower():
+                    try:
+                        self.search_tree.detach(iid)
+                        detached[iid] = True
+                    except Exception:
+                        pass
+        self._search_detached = detached
+
+    def buscar_relacionadas(self, texto):
+        """Pone en el filtro de búsquedas las palabras distintivas de un
+        texto (artista), para ver todas las búsquedas relacionadas."""
+        toks = query_tokens(texto)
+        # la palabra más larga suele ser la distintiva (el artista)
+        clave = max(toks, key=len) if toks else ""
+        self.search_filter_var.set(clave)
+        self._apply_search_filter()
+        self.notebook.select(1)
+
     def _activity_render(self, searches, downloads):
         for ug in downloads:
             user = ug.get("username", "")
@@ -5950,6 +5999,8 @@ class MacetaApp(tk.Tk):
                 self._activity_dl_vals.pop(iid, None)
                 if self.dl_tree.exists(iid):
                     self.dl_tree.delete(iid)
+        if self.search_filter_var.get().strip():
+            self._apply_search_filter()
         self._update_activity_stats(searches, downloads)
 
     def _render_missing_downloads(self, searches) -> set:
