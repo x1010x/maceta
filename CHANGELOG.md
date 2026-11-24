@@ -3,6 +3,19 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.54
+
+- **Verificación de canciones con huella acústica (Chromaprint).** Para
+  decidir si una descarga es la misma canción que tu original, Maceta
+  usaba una comparación por cromagrama que se equivocaba con música que
+  suena parecida (el psytrance daba falsos positivos y dejaba
+  duplicados). Ahora usa Chromaprint — la huella de AcoustID/MusicBrainz,
+  diseñada justo para esto: identifica la misma grabación aunque cambie
+  el bitrate o el recorte. Validado con canciones reales: misma canción
+  da ~0.99, dos temas distintos ~0.52, con el umbral en 0.90 de margen.
+  Si `fpcalc` no está instalado, cae a la comparación de antes, así que
+  nada se rompe.
+
 ## 0.4.53
 
 - **Manual de Maceta integrado** (Ayuda → 📖 Manual de Maceta…). Una

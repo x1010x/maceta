@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.53"
+VERSION = "0.4.54"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -1153,6 +1153,97 @@ def prune_download_links() -> None:
         save_download_links(alive)
 
 
+_FPCALC = None
+_fp_cache = {}      # (ruta, size, mtime) -> lista de uint32
+# Umbral de similitud de Chromaprint: misma grabación ~0.98, distintas
+# ~0.5. 0.90 deja un margen enorme y descarta falsos positivos (el
+# problema que dejaba duplicados con el cromagrama en temas que suenan
+# parecido, como el psytrance).
+FP_MATCH_THRESHOLD = 0.90
+
+
+def _find_fpcalc():
+    """fpcalc: primero junto al Python de Maceta (donde lo pone conda o
+    el instalador), luego en el PATH. None si no está."""
+    global _FPCALC
+    if _FPCALC is not None:
+        return _FPCALC or None
+    cand = Path(sys.executable).parent / "fpcalc"
+    if cand.exists():
+        _FPCALC = str(cand)
+    else:
+        _FPCALC = shutil.which("fpcalc") or ""
+    return _FPCALC or None
+
+
+def audio_fingerprint(path: str, length: int = 90):
+    """Huella acústica de Chromaprint: lista de enteros de 32 bits.
+
+    Identifica la grabación aunque cambie el bitrate o el recorte. Se
+    cachea por fichero. [] si fpcalc no está o el audio no se lee."""
+    ff = _find_fpcalc()
+    if not ff:
+        return []
+    try:
+        st = os.stat(path)
+    except OSError:
+        return []
+    key = (str(path), st.st_size, round(st.st_mtime, 3))
+    hit = _fp_cache.get(key)
+    if hit is not None:
+        return hit
+    try:
+        out = subprocess.run(
+            [ff, "-raw", "-length", str(length), path],
+            capture_output=True, text=True, timeout=30).stdout
+    except Exception:
+        return []
+    fp = []
+    for ln in out.splitlines():
+        if ln.startswith("FINGERPRINT="):
+            fp = [int(x) for x in ln[12:].split(",") if x]
+            break
+    if len(_fp_cache) > 5000:
+        _fp_cache.clear()
+    _fp_cache[key] = fp
+    return fp
+
+
+def fingerprint_similarity(fp1, fp2, max_offset: int = 60) -> float:
+    """Fracción de bits que coinciden en la mejor alineación (prueba
+    varios desfases para tolerar recortes distintos). 1 = idéntico,
+    ~0.5 = azar."""
+    if not fp1 or not fp2:
+        return 0.0
+    best = 0.0
+    for off in range(-max_offset, max_offset + 1):
+        a0, b0 = (off, 0) if off >= 0 else (0, -off)
+        n = min(len(fp1) - a0, len(fp2) - b0)
+        if n < 10:
+            continue
+        same = 0
+        for i in range(n):
+            x = (fp1[a0 + i] ^ fp2[b0 + i]) & 0xFFFFFFFF
+            same += 32 - bin(x).count("1")
+        sc = same / (n * 32)
+        if sc > best:
+            best = sc
+    return best
+
+
+def songs_match_fingerprint(path_a: str, path_b: str):
+    """Compara por huella de Chromaprint. (match, sim, motivo) o None si
+    fpcalc no está disponible (para que songs_match caiga al cromagrama)."""
+    if not _find_fpcalc():
+        return None
+    fp_a = audio_fingerprint(path_a)
+    fp_b = audio_fingerprint(path_b)
+    if not fp_a or not fp_b:
+        return None
+    sim = fingerprint_similarity(fp_a, fp_b)
+    return (sim >= FP_MATCH_THRESHOLD, sim, f"huella {sim:.2f}")
+
+
 def songs_match(path_a: str, path_b: str,
                 sec: float = 30.0, threshold: float = None):
     """Compara dos ficheros de audio y decide si son la misma canción.
@@ -1162,6 +1253,11 @@ def songs_match(path_a: str, path_b: str,
     """
     if threshold is None:
         threshold = AUDIO_MATCH_THRESHOLD
+    # Primero la huella acústica (Chromaprint): es lo fiable. Solo si
+    # fpcalc no está se cae al cromagrama de abajo.
+    por_huella = songs_match_fingerprint(path_a, path_b)
+    if por_huella is not None:
+        return por_huella
     try:
         meta_a = get_metadata(path_a)
         meta_b = get_metadata(path_b)
