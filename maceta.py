@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.51"
+VERSION = "0.4.52"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -649,6 +649,39 @@ def _spawn_detached(cmd, cwd=None, log_path=None):
 
 
 # ---------- Sustitución y archivado ----------
+
+# Maceta NUNCA borra de verdad: todo lo que "elimina" va a la papelera
+# del sistema (recuperable). Si send2trash no está, se mueve a una
+# papelera propia dentro de la carpeta de Maceta, nunca a /dev/null.
+MACETA_TRASH = MACETA_ROOT / "papelera"
+
+
+def to_trash(path) -> bool:
+    """Manda un fichero o carpeta a la papelera. Devuelve True si lo
+    consiguió. No usa os.remove/unlink jamás: lo peor que pasa es que se
+    quede donde está, nunca que se pierda."""
+    p = Path(path)
+    if not p.exists():
+        return True
+    try:
+        from send2trash import send2trash as _s2t
+        _s2t(str(p))
+        return True
+    except Exception as e:
+        log.info("send2trash no disponible (%s); uso papelera propia", e)
+    # Red de seguridad: mover a ~/maceta/papelera conservando el nombre.
+    try:
+        MACETA_TRASH.mkdir(parents=True, exist_ok=True)
+        destino = MACETA_TRASH / p.name
+        if destino.exists():
+            destino = MACETA_TRASH / (
+                p.stem + "." + str(int(time.time())) + p.suffix)
+        shutil.move(str(p), str(destino))
+        return True
+    except Exception as e:
+        log.warning("no se pudo enviar a la papelera %s: %s", p, e)
+        return False
+
 
 def archive_path_for(original_path: str) -> Path:
     """Ruta espejo dentro de ARCHIVE_DIR conservando la ruta absoluta original.
@@ -4633,15 +4666,16 @@ class MacetaApp(tk.Tk):
                  if i in self._dl_files_paths]
         if not messagebox.askyesno(
             "Maceta",
-            f"Borrar del disco {len(paths)} fichero(s) en downloads/?\n\n"
-            "Esta acción NO es recuperable.",
+            f"Enviar a la papelera {len(paths)} fichero(s) de downloads/?\n\n"
+            "Van a la papelera del sistema: recuperables desde ahí.",
         ):
             return
+        fallos = 0
         for p in paths:
-            try:
-                p.unlink()
-            except Exception as e:
-                self.status.set(f"Error borrando {p.name}: {e}")
+            if not to_trash(p):
+                fallos += 1
+        if fallos:
+            self.status.set(f"{fallos} no se pudieron enviar a la papelera")
         self._refresh_downloads_tab()
 
     def _clean_incomplete(self):
@@ -4679,12 +4713,7 @@ class MacetaApp(tk.Tk):
             return
         errors = 0
         for entry in inc.iterdir():
-            try:
-                if entry.is_dir():
-                    shutil.rmtree(entry)
-                else:
-                    entry.unlink()
-            except Exception:
+            if not to_trash(entry):
                 errors += 1
         if errors:
             self.status.set(
@@ -4743,14 +4772,15 @@ class MacetaApp(tk.Tk):
         def worker():
             errors = 0
             for p in files:
-                try:
-                    p.unlink()
-                except Exception:
+                if not to_trash(p):
                     errors += 1
+            # Carpetas vacías que queden: a la papelera también, sin
+            # forzar (si algo quedó dentro, se respeta).
             dirs = [d for d in DOWNLOADS_DIR.rglob("*") if d.is_dir()]
             for d in sorted(dirs, key=lambda x: len(x.parts), reverse=True):
                 try:
-                    d.rmdir()
+                    if not any(d.iterdir()):
+                        d.rmdir()
                 except OSError:
                     pass
             prune_download_links()
@@ -5850,9 +5880,9 @@ class MacetaApp(tk.Tk):
                        f"error convert: {reason[:100]}")
             self.after(0, self._release_active, orig_iid)
             return
-        # Borrar el FLAC de forma permanente (no a archivo/)
+        # El FLAC ya convertido va a la papelera, no se borra.
         try:
-            flac.unlink()
+            to_trash(flac)
         except Exception:
             pass
         if row and self.substitute_var.get():

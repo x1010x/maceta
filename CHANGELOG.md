@@ -3,6 +3,16 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.52
+
+- **Maceta ya no borra nada de forma permanente — nunca.** Todo lo que
+  antes se eliminaba de verdad (descargas que borras a mano, "Borrar
+  TODO", los parciales de `.incomplete/`, el FLAC que se convierte a MP3)
+  ahora va a la **papelera del sistema**, recuperable. Si por lo que sea
+  la papelera del sistema no estuviera disponible, se mueve a una
+  papelera propia dentro de la carpeta de Maceta: en ningún caso se
+  pierde. Los diálogos lo dicen: "van a la papelera, recuperables".
+
 ## 0.4.51
 
 - **Botón "🧹 Limpiar archivo…"** en Preferencias → Opciones → Descargas.

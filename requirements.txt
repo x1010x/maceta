@@ -6,3 +6,4 @@ soundfile>=0.12
 requests>=2.31
 pytest>=7.0
 sounddevice>=0.4
+send2trash>=1.8
