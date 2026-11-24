@@ -3,6 +3,16 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.62
+
+- **Escalada automática ante FAKE.** Si bajas una versión y al analizarla
+  sigue siendo FAKE (o de calidad por debajo del mínimo), Maceta baja sola
+  la **siguiente mejor versión** de la misma búsqueda (ordenadas por
+  codec/tamaño/calidad) y vuelve a comprobarla — subiendo hasta dar con
+  una buena o agotar las versiones. Evita repetir el mismo fichero (mismo
+  nombre y tamaño). Se puede apagar: *Opciones → «Si FAKE, probar
+  siguiente versión»* (viene activado).
+
 ## 0.4.61
 
 - El contador de la cola vuelve a mostrar el total: *«📤 312 por buscar

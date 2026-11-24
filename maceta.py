@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.61"
+VERSION = "0.4.62"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -460,6 +460,9 @@ USER_STATE_DEFAULTS = {
     "audio_match_threshold":      0.85,
     "max_auto_requery":           3,
     "auto_substitute":            True,
+    # Si una descarga sigue siendo FAKE/mala, bajar sola la siguiente
+    # mejor versión de la misma búsqueda (subiendo por tamaño/calidad).
+    "auto_escalate_fake":         True,
 }
 
 QUERY_MODES = [
@@ -2270,6 +2273,17 @@ def choose_best(responses: list, query: str,
     cuánto pesara. Antes el tamaño mandaba y se bajaban directos de 52 MB
     en vez del tema de estudio de 46 MB que sí se llamaba igual.
     """
+    ranked = ranked_candidates(responses, query, min_bitrate, filters)
+    return ranked[0] if ranked else None
+
+
+def ranked_candidates(responses: list, query: str,
+                      min_bitrate: int = GOOD_MP3_MIN_BR,
+                      filters: dict = None) -> list:
+    """Todos los (resp, f) aceptables, ordenados mejor-primero con la misma
+    regla que choose_best. Los peers disponibles van antes que los que
+    tienen cola. Lo usa la escalada: si la mejor versión sale FAKE, se baja
+    la siguiente de la lista."""
     available, waiting = [], []
     for resp in responses:
         if peer_rejection_reason(resp, filters):
@@ -2278,19 +2292,16 @@ def choose_best(responses: list, query: str,
             if not is_acceptable(f, min_bitrate=min_bitrate, filters=filters):
                 continue
             (available if _is_available_peer(resp) else waiting).append(
-                (resp, f)
-            )
+                (resp, f))
 
     def rank(rf):
         resp, f = rf
         return (name_tier(query, f.get("filename")),
                 *_quality_rank(resp, f, query))
 
-    pool = available if available else waiting
-    if not pool:
-        return None
-    pool.sort(key=rank, reverse=True)
-    return pool[0]
+    available.sort(key=rank, reverse=True)
+    waiting.sort(key=rank, reverse=True)
+    return available + waiting
 
 
 # ---------- Estado / bucket / display de la columna Calidad ----------
@@ -2927,6 +2938,11 @@ class MacetaApp(tk.Tk):
             value=us["audio_match_threshold"])
         self.max_auto_requery_var = tk.IntVar(value=us["max_auto_requery"])
         self.auto_substitute_var = tk.BooleanVar(value=us["auto_substitute"])
+        self.auto_escalate_var = tk.BooleanVar(
+            value=us.get("auto_escalate_fake", True))
+        # iid -> {cands, tried, query, min_br, n}: plan para subir a la
+        # siguiente mejor versión si la descargada sigue FAKE.
+        self._escalation: dict[str, dict] = {}
         self.restore_last_folder_var = tk.BooleanVar(
             value=us["restore_last_folder"])
         self.use_index_var = tk.BooleanVar(value=us["use_index"])
@@ -3892,6 +3908,7 @@ class MacetaApp(tk.Tk):
             "audio_match_threshold":    float(self._num(self.audio_match_threshold, 0.85)),
             "max_auto_requery":         int(self._num(self.max_auto_requery_var, 3)),
             "auto_substitute":          bool(self.auto_substitute_var.get()),
+            "auto_escalate_fake":       bool(self.auto_escalate_var.get()),
             "restore_last_folder":      bool(self.restore_last_folder_var.get()),
             "use_index":                bool(self.use_index_var.get()),
             "banned_peers":             list(self.banned_peers),
@@ -4101,6 +4118,10 @@ class MacetaApp(tk.Tk):
                         variable=self.force_320_var,
                         command=self._update_pref_indicator
                         ).pack(side=tk.LEFT, padx=12)
+        ttk.Checkbutton(opts, text="Si FAKE, probar siguiente versión",
+                        variable=self.auto_escalate_var,
+                        command=self._update_pref_indicator
+                        ).pack(side=tk.LEFT)
 
 
     # ---------- Pestaña de estadísticas ----------
@@ -6222,6 +6243,8 @@ class MacetaApp(tk.Tk):
     def _verify_and_substitute(self, orig_iid, row, local_path):
         match, sim, reason = songs_match(row["path"], local_path)
         if not match:
+            if self._escalate_fake(orig_iid, row, f"no coincide ({reason})"):
+                return
             self.after(0, self._set_slsk_status, orig_iid,
                        f"✗ no coincide ({reason})")
             self.after(0, self._release_active, orig_iid)
@@ -6229,6 +6252,8 @@ class MacetaApp(tk.Tk):
         q_ok, q_reason = verify_download_quality(
             local_path, min_bitrate=self._min_bitrate_for(row))
         if not q_ok:
+            if self._escalate_fake(orig_iid, row, q_reason):
+                return
             self.after(0, self._set_slsk_status, orig_iid,
                        f"✗ calidad baja ({q_reason})")
             self.after(0, self._release_active, orig_iid)
@@ -6254,6 +6279,7 @@ class MacetaApp(tk.Tk):
             row["detail"] = ""
             row["slsk_status"] = f"✓ sustituido ({reason})"
             index_mark_substituted(str(new_path), reason)
+            self._escalation.pop(orig_iid, None)
             self.tree.item(orig_iid, text=row["name"],
                            values=self._row_values(row), tags=("PENDING",))
             self._release_active(orig_iid)
@@ -7987,15 +8013,37 @@ class MacetaApp(tk.Tk):
                 self.active_by_iid[link_iid] = "descargando"
                 self.finalized_dl_keys.discard(key)
             return True, f"ya en descargas: {existing.name}"
+        tag = self._enqueue_pick(client, link_iid, resp, f, query, n)
+        if link_iid and self.auto_escalate_var.get():
+            ranked = ranked_candidates(responses, query, min_br,
+                                       self._search_filters())
+            if len(ranked) > 1:
+                self._escalation[link_iid] = {
+                    "cands": ranked,
+                    "tried": {self._candidate_sig(f)},
+                    "query": query, "min_br": min_br, "n": n,
+                }
+        if variant:
+            auto_note += f" · variante {variant}"
+        return True, f"↓ {tag} de {resp['username']}{auto_note}"
+
+    @staticmethod
+    def _candidate_sig(f):
+        name = (f.get("filename") or "").replace(
+            "\\", "/").rsplit("/", 1)[-1].lower()
+        return (name, (f.get("size") or 0) // (64 * 1024))
+
+    def _enqueue_pick(self, client, link_iid, resp, f, query, n):
+        """Encola una candidata concreta y la vincula al row original.
+        Devuelve la etiqueta de calidad (p. ej. '320kbps', 'FLAC')."""
         payload = [{"filename": f["filename"], "size": f.get("size", 0)}]
         client.enqueue_download(resp["username"], payload)
         key = (resp["username"], (f["filename"] or "").lower())
         self._dl_num[key] = n
+        self.finalized_dl_keys.discard(key)
         if link_iid:
             self.pending_dl_links[key] = link_iid
             self.active_by_iid[link_iid] = "descargando"
-            # Persistir el link para poder sustituir aunque la biblio
-            # ya no tenga la fila cargada.
             row = self.rows_by_iid.get(link_iid) or {}
             if row.get("path"):
                 try:
@@ -8004,10 +8052,41 @@ class MacetaApp(tk.Tk):
                     log.warning("add_download_link failed: %s", e)
         ext = _file_ext(f)
         br = f.get("bitRate")
-        tag = "FLAC" if ext == "flac" else (f"{br}kbps" if br else ext.upper())
-        if variant:
-            auto_note += f" · variante {variant}"
-        return True, f"↓ {tag} de {resp['username']}{auto_note}"
+        return ("FLAC" if ext == "flac"
+                else (f"{br}kbps" if br else ext.upper()))
+
+    def _escalate_fake(self, orig_iid, row, reason):
+        """La descarga salió FAKE/mala: baja la siguiente mejor versión de
+        la misma búsqueda. True si lanzó otra, False si no quedan."""
+        if not self.auto_escalate_var.get():
+            return False
+        plan = self._escalation.get(orig_iid)
+        if not plan:
+            return False
+        client = self._slsk_client()
+        if client is None:
+            return False
+        for resp, f in plan["cands"]:
+            sig = self._candidate_sig(f)
+            if sig in plan["tried"]:
+                continue
+            plan["tried"].add(sig)
+            if self._find_local_download(f["filename"]) is not None:
+                continue
+            try:
+                tag = self._enqueue_pick(client, orig_iid, resp, f,
+                                         plan["query"], plan.get("n", 0))
+            except Exception as e:
+                log.warning("escalate enqueue failed: %s", e)
+                continue
+            n_try = len(plan["tried"])
+            log.info("escalate iid=%s intento %d (%s) tras: %s",
+                     orig_iid, n_try, tag, reason)
+            self.after(0, self._set_slsk_status, orig_iid,
+                       f"↑ FAKE, probando versión {n_try} ({tag})")
+            return True
+        self._escalation.pop(orig_iid, None)
+        return False
 
     def _slsk_one(self, client, iid, row):
         query = build_query(row, self.query_mode_var.get())
