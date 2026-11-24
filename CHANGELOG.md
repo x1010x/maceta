@@ -3,6 +3,11 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.61
+
+- El contador de la cola vuelve a mostrar el total: *«📤 312 por buscar
+  (de 350)»*, además del botón «📤 Cola…» para verla y cancelar.
+
 ## 0.4.60
 
 - **Cola de búsqueda visible y cancelable.** Cuando mandas muchas

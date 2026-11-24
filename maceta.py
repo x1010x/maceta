@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.60"
+VERSION = "0.4.61"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2971,6 +2971,7 @@ class MacetaApp(tk.Tk):
         # Se puede ver y cancelar; el worker la consume de a una.
         self._search_queue = []
         self._search_running = False
+        self._batch_total = 0      # total mandado a buscar en la tanda
         self._results_current_sid = None
         self._fetching_sid = None
         self._player_proc = None
@@ -6093,7 +6094,9 @@ class MacetaApp(tk.Tk):
             return f" ({100 * n / t:.0f}%)" if t else ""
 
         por_buscar = len(self._search_queue)
-        cola = (f"📤 {por_buscar} por buscar · " if por_buscar else "")
+        total = max(self._batch_total, por_buscar)
+        cola = (f"📤 {por_buscar} por buscar (de {total}) · "
+                if por_buscar else "")
         if total_s or por_buscar:
             self.act_search_stats.set(
                 cola +
@@ -7798,6 +7801,7 @@ class MacetaApp(tk.Tk):
                                 "Esas canciones ya están buscando/descargando.")
             return
         picker = len(candidates) == 1 and not self._search_queue
+        self._batch_total += len(candidates)
         for iid, row in candidates:
             self.active_by_iid[iid] = "buscando"
             self._set_slsk_status(iid, "⏳ en cola de búsqueda")
@@ -7859,6 +7863,7 @@ class MacetaApp(tk.Tk):
             procesadas += 1
             self.after(0, self._refresh_activity_stats_soft)
         self._search_running = False
+        self._batch_total = 0
         self.after(0, self._slsk_batch_done, procesadas)
 
     def _acceptable_count(self, responses, min_br):
