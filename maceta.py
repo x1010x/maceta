@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.59"
+VERSION = "0.4.60"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2967,8 +2967,10 @@ class MacetaApp(tk.Tk):
         self._dl_num: dict[tuple, int] = {}    # (user, filename_lc) -> #N
         self._search_link_iid: dict[str, str] = {}  # sid -> orig iid
         self._scan_gen = 0
-        self._batch_total = 0      # canciones mandadas a buscar en el lote
-        self._batch_done = 0       # ya procesadas del lote
+        # Cola real de búsqueda: [(iid, row, custom_query, allow_picker)].
+        # Se puede ver y cancelar; el worker la consume de a una.
+        self._search_queue = []
+        self._search_running = False
         self._results_current_sid = None
         self._fetching_sid = None
         self._player_proc = None
@@ -4591,6 +4593,8 @@ class MacetaApp(tk.Tk):
         self.act_search_stats = tk.StringVar(value="🔎 sin búsquedas")
         self.act_dl_stats = tk.StringVar(value="📥 sin descargas")
         ttk.Label(stats, textvariable=self.act_search_stats).pack(side=tk.LEFT)
+        ttk.Button(stats, text="📤 Cola…",
+                   command=self.on_search_queue).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Separator(stats, orient="vertical").pack(
             side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Label(stats, textvariable=self.act_dl_stats).pack(side=tk.LEFT)
@@ -5366,6 +5370,9 @@ class MacetaApp(tk.Tk):
     def on_soulseek_diag(self):
         SoulseekDiagDialog(self)
 
+    def on_search_queue(self):
+        SearchQueueDialog(self)
+
     def on_options(self, tab=None):
         OptionsDialog(self, tab=tab)
 
@@ -6085,9 +6092,8 @@ class MacetaApp(tk.Tk):
         def pct(n, t):
             return f" ({100 * n / t:.0f}%)" if t else ""
 
-        por_buscar = max(0, self._batch_total - self._batch_done)
-        cola = (f"📤 {por_buscar} por buscar (de {self._batch_total}) · "
-                if por_buscar else "")
+        por_buscar = len(self._search_queue)
+        cola = (f"📤 {por_buscar} por buscar · " if por_buscar else "")
         if total_s or por_buscar:
             self.act_search_stats.set(
                 cola +
@@ -7791,63 +7797,69 @@ class MacetaApp(tk.Tk):
             messagebox.showinfo("Maceta",
                                 "Esas canciones ya están buscando/descargando.")
             return
-        self.status.set(f"Buscando en Soulseek: {len(candidates)} canciones…")
-        threading.Thread(
-            target=self._run_slsk_batch,
-            args=(client, candidates),
-            kwargs={"custom_query": custom_query},
-            daemon=True,
-        ).start()
-
-    def _run_slsk_batch(self, client, candidates, custom_query=None):
-        total = len(candidates)
-        allow_picker = total == 1
-
-        # Marcar todos como "en cola" antes de arrancar workers
+        picker = len(candidates) == 1 and not self._search_queue
         for iid, row in candidates:
             self.active_by_iid[iid] = "buscando"
-        self.after(0, self.status.set,
-                   f"Buscando en Soulseek ({total} en paralelo)…")
+            self._set_slsk_status(iid, "⏳ en cola de búsqueda")
+            self._search_queue.append((iid, row, custom_query, picker))
+        self.status.set(
+            f"{len(self._search_queue)} en cola de búsqueda…")
+        self._refresh_activity_stats_soft()
+        if not self._search_running:
+            self._search_running = True
+            threading.Thread(target=self._search_queue_worker,
+                             args=(client,), daemon=True).start()
 
-        def worker(iid, row):
+    def cancel_search_queue(self, iids=None):
+        """Quita canciones de la cola de búsqueda (las que aún no se han
+        lanzado). iids=None → vaciar la cola entera. No cancela la que ya
+        está buscando en ese momento."""
+        quitar = set(iids) if iids is not None else None
+        resto = []
+        n = 0
+        for item in self._search_queue:
+            iid = item[0]
+            if quitar is None or iid in quitar:
+                self._release_active(iid)
+                self._set_slsk_status(iid, "✗ búsqueda cancelada")
+                n += 1
+            else:
+                resto.append(item)
+        self._search_queue = resto
+        self._refresh_activity_stats_soft()
+        self.status.set(f"{n} quitada(s) de la cola de búsqueda")
+        return n
+
+    def _search_queue_worker(self, client):
+        procesadas = 0
+        while self._search_queue:
+            iid, row, custom_query, allow_picker = self._search_queue.pop(0)
+            if iid not in self.active_by_iid:   # cancelada mientras esperaba
+                continue
             query = (custom_query
                      or build_query(row, self.query_mode_var.get())
                      or row["name"])
             self.after(0, self._set_slsk_status, iid, f"buscando: {query}")
+            self.after(0, self._refresh_activity_stats_soft)
             t0 = time.time()
             log.info("search start iid=%s query=%r", iid, query)
             try:
                 ok, text = self._slsk_search_download(
-                    client, query, allow_picker=allow_picker, link_iid=iid,
-                )
+                    client, query, allow_picker=allow_picker, link_iid=iid)
             except Exception as e:
                 log.exception("search worker failed for %r", query)
                 ok, text = False, f"error: {str(e)[:60]}"
             log.info("search done iid=%s ok=%s took=%.2fs → %s",
                      iid, ok, time.time() - t0, text)
-            return iid, ok, text
-
-        # Búsquedas secuenciales — el paralelismo saturaba slskd y hacía
-        # que el hilo principal esperase en llamadas HTTP encadenadas.
-        # Acumula al lote en curso (puede haber varios encadenados).
-        self._batch_total += total
-        self.after(0, self._refresh_activity_stats_soft)
-        done = 0
-        for iid, row in candidates:
-            try:
-                _, ok, text = worker(iid, row)
-            except Exception as e:
-                ok, text = False, f"error: {str(e)[:60]}"
             if ok:
                 self.after(0, self._set_slsk_status, iid, text)
             else:
                 self.after(0, self._set_slsk_status, iid, f"✗ {text}")
-                self._release_active(iid)
-            done += 1
-            self._batch_done += 1
-            self.after(0, self.progress.set, done / total * 100)
+                self.after(0, self._release_active, iid)
+            procesadas += 1
             self.after(0, self._refresh_activity_stats_soft)
-        self.after(0, self._slsk_batch_done, total)
+        self._search_running = False
+        self.after(0, self._slsk_batch_done, procesadas)
 
     def _acceptable_count(self, responses, min_br):
         """Cuántos ficheros pasarían el filtro — lo que el picker
@@ -8012,8 +8024,6 @@ class MacetaApp(tk.Tk):
     def _refresh_activity_stats_soft(self):
         """Repinta solo el resumen (barato), sin tocar slskd. Lo llama el
         lote de búsqueda para que el contador 'por buscar' baje en vivo."""
-        if self._batch_done >= self._batch_total:
-            self._batch_total = self._batch_done = 0
         try:
             self._update_activity_stats(
                 getattr(self, "_last_searches", []),
@@ -8022,8 +8032,6 @@ class MacetaApp(tk.Tk):
             pass
 
     def _slsk_batch_done(self, total):
-        if self._batch_done >= self._batch_total:
-            self._batch_total = self._batch_done = 0
         self._refresh_activity_stats_soft()
         queued = sum(1 for r in self.rows_by_iid.values()
                      if (r.get("slsk_status") or "").startswith("↓"))
@@ -9509,6 +9517,73 @@ COLOR_ESSENTIALS = [
     ("verdict_FAKE",     "Texto FAKE"),
     ("verdict_LOSSLESS", "Texto LOSSLESS"),
 ]
+
+
+class SearchQueueDialog(tk.Toplevel):
+    """La cola de canciones pendientes de buscar en Soulseek. Permite
+    quitar algunas o vaciarla. No cancela la que ya está buscando."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Cola de búsqueda")
+        self.geometry("560x460")
+        self.transient(app)
+
+        ttk.Label(self, padding=(12, 10, 12, 2),
+                  text="Canciones que mandaste a buscar y están esperando "
+                       "turno. La que suena arriba ya está buscando.",
+                  foreground="#888", wraplength=520, justify="left").pack(
+            fill=tk.X)
+
+        wrap = ttk.Frame(self, padding=(12, 4))
+        wrap.pack(fill=tk.BOTH, expand=True)
+        self.listbox = tk.Listbox(wrap, selectmode=tk.EXTENDED)
+        vsb = ttk.Scrollbar(wrap, orient="vertical",
+                            command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=vsb.set)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btns = ttk.Frame(self, padding=(12, 4, 12, 12))
+        btns.pack(fill=tk.X)
+        ttk.Button(btns, text="Quitar seleccionadas",
+                   command=self._quitar_sel).pack(side=tk.LEFT)
+        ttk.Button(btns, text="🧹 Vaciar la cola",
+                   command=self._vaciar).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="↻", width=3,
+                   command=self._refresh).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Cerrar",
+                   command=self.destroy).pack(side=tk.RIGHT)
+        self._refresh()
+
+    def _refresh(self):
+        self.listbox.delete(0, tk.END)
+        self._iids = []
+        for iid, row, cq, _p in self.app._search_queue:
+            nombre = (row.get("name") if isinstance(row, dict) else "") or iid
+            self.listbox.insert(tk.END, nombre)
+            self._iids.append(iid)
+        self.title(f"Cola de búsqueda ({len(self._iids)})")
+        if not self._iids:
+            self.listbox.insert(tk.END, "(la cola está vacía)")
+
+    def _quitar_sel(self):
+        sel = [self._iids[i] for i in self.listbox.curselection()
+               if i < len(self._iids)]
+        if sel:
+            self.app.cancel_search_queue(sel)
+        self._refresh()
+
+    def _vaciar(self):
+        if not self._iids:
+            return
+        if messagebox.askyesno(
+            "Maceta",
+            f"Vaciar la cola de búsqueda ({len(self._iids)} canciones)?\n\n"
+            "Dejan de buscarse. No se borra ni se toca ningún fichero."):
+            self.app.cancel_search_queue()
+        self._refresh()
 
 
 class SoulseekDiagDialog(tk.Toplevel):

@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.60
+
+- **Cola de búsqueda visible y cancelable.** Cuando mandas muchas
+  canciones a buscar, ahora puedes verlas: botón **«📤 Cola…»** en el
+  resumen de Actividad Soulseek. Abre una ventana con la lista de lo que
+  queda por buscar y te deja **quitar las que selecciones** o **vaciar la
+  cola** entera. No cancela la que está buscando en ese instante, y no
+  borra ni toca ningún fichero — solo deja de buscarlas.
+
 ## 0.4.59
 
 - **Contador «por buscar»** en el resumen de Actividad Soulseek. Cuando
