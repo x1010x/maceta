@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.68"
+VERSION = "0.4.69"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -8249,8 +8249,9 @@ class MacetaApp(tk.Tk):
         ttk.Label(bar, text="🎧 Wishlist").pack(side=tk.LEFT)
         icon_button(bar, "🎵", "Importar una playlist de Spotify",
                     self.on_spotify_import, side=tk.LEFT, padx=(10, 0))
-        icon_button(bar, "🔎", "Buscar y bajar los pendientes",
-                    self.on_wish_search_pending, side=tk.LEFT, padx=(10, 0))
+        ttk.Button(bar, text="🔎 Buscar todos",
+                   command=self.on_wish_search_pending).pack(
+            side=tk.LEFT, padx=(10, 0))
         icon_button(bar, "↻", "Reintentar los seleccionados",
                     self.on_wish_retry, side=tk.LEFT)
         icon_button(bar, "🗑", "Quitar los seleccionados de la lista",

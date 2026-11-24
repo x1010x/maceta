@@ -3,6 +3,12 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.69
+
+- En la Wishlist, el botón de buscar ahora pone **«🔎 Buscar todos»** (con
+  texto, más claro): lanza la búsqueda y descarga de todos los temas que
+  aún no tienes bajados.
+
 ## 0.4.68
 
 - En *Importar de Spotify*, botón nuevo **«➕ Añadir los que faltan»**: mete
