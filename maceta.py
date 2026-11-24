@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.52"
+VERSION = "0.4.53"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3145,6 +3145,9 @@ class MacetaApp(tk.Tk):
 
         m_help = tk.Menu(mb, tearoff=0)
         mb.add_cascade(label="Ayuda", menu=m_help)
+        m_help.add_command(label="📖 Manual de Maceta…",
+                           command=self.on_manual)
+        m_help.add_separator()
         m_help.add_command(label="Comprobar actualizaciones…",
                            command=self.on_check_updates)
         m_help.add_command(label="Configurar actualizaciones…",
@@ -5111,6 +5114,9 @@ class MacetaApp(tk.Tk):
 
     def on_options(self, tab=None):
         OptionsDialog(self, tab=tab)
+
+    def on_manual(self):
+        ManualDialog(self)
 
     def _select_all_tree(self, _event=None):
         if self.focus_get() is self.tree:
@@ -7684,6 +7690,235 @@ class MacetaApp(tk.Tk):
         self.after(0, self.status.set, f"'{query}' → {text}")
         if ok and link_iid is None:
             self.after(0, self.search_var.set, "")
+
+MACETA_MANUAL = [
+    ("¿Qué es Maceta?", [
+        "Maceta mira tu biblioteca de música y encuentra los MP3 falsos: "
+        "los que dicen «320 kbps» pero en realidad vienen de un 128 "
+        "recodificado y suenan peor. Luego te ayuda a bajar una versión "
+        "buena por Soulseek y a ponerla en su sitio.",
+        "",
+        "Regla de oro: Maceta NUNCA borra nada. Al sustituir, el original "
+        "va a la carpeta archivo/. Al «borrar», va a la papelera del "
+        "sistema. Todo es recuperable.",
+    ]),
+    ("Las pestañas de arriba", [
+        "• Biblioteca — tu música: analizar, ver la calidad, buscar fakes.",
+        "• Actividad Soulseek — las búsquedas y descargas en curso.",
+        "• Descargas — los ficheros que has bajado, para colocarlos.",
+        "• Mensajes — el chat privado de Soulseek.",
+        "• Estadísticas — números de tu colección, con cosas curiosas.",
+    ]),
+    ("Biblioteca: el explorador de carpetas (izquierda)", [
+        "A la izquierda está el árbol de tus carpetas, con cuántos temas, "
+        "fakes y pendientes tiene cada una.",
+        "• Al seleccionar una carpeta, TODO trabaja sobre ella: los chips "
+        "de arriba pasan a ser las estadísticas de esa carpeta, y los "
+        "botones de abajo actúan solo sobre lo que ves.",
+        "• «📚» o «Toda la biblioteca» vuelve a verlo todo.",
+        "• «🔄 Re-escanear» vuelve a mirar el disco: recoge lo nuevo y "
+        "quita lo que ya no está, sin perder el análisis de lo demás.",
+    ]),
+    ("Biblioteca: los chips de estado", [
+        "Arriba, cada chip filtra y cuenta un grupo:",
+        "• ⚠ Revisar — descargas cuyo audio no cuadra con el original.",
+        "• ❌ FAKE — calidad real por debajo de la que declaran.",
+        "• ⛔ Error — fallo técnico al analizar.",
+        "• ⏳ En proceso — con búsqueda o descarga en marcha.",
+        "• ✅ Listas — analizadas y correctas.",
+        "• ⬇ Sustituidas — ya reemplazadas por una versión mejor.",
+        "• ❓ Sin analizar — pendientes de analizar.",
+        "",
+        "El filtro de texto de al lado oculta filas por nombre (usa * y ?).",
+    ]),
+    ("Biblioteca: analizar y los botones", [
+        "• «🔎 Analizar» — mira el espectro de cada canción y decide si es "
+        "FAKE. Lo hace una sola vez: lo ya analizado se recuerda (por "
+        "huella del fichero), así que mover o renombrar no obliga a "
+        "repetir.",
+        "• «🔄 Re-analizar» — fuerza, ignorando lo recordado.",
+        "• «⬇ Buscar fakes» — busca en Soulseek reemplazo de las FAKE que "
+        "estás viendo (de la carpeta o chip activo).",
+        "• «▶ / ⏹» — reproduce la canción seleccionada.",
+        "• «🗑 Borrar (a archivo/)» — mueve a archivo/, NO borra.",
+        "• «Compacto» junta Formato+Bitrate+SR en una celda; A−/A+ cambian "
+        "el tamaño de letra de esa tabla.",
+        "• Doble clic en una fila abre su espectro.",
+    ]),
+    ("Cómo decide si algo es FAKE", [
+        "Mira el corte del espectro: por encima de ~16 kHz hay información "
+        "real; por debajo, es un transcode. Un «320» con corte a 15 kHz es "
+        "un 128 disfrazado. El bitrate declarado da igual: manda el audio.",
+        "Doble clic en una canción muestra su espectro con el corte "
+        "marcado, para verlo tú mismo.",
+    ]),
+    ("Actividad Soulseek: buscar y descargar", [
+        "Arriba escribes y «Bajar de Soulseek». Abajo, tres paneles:",
+        "• Búsquedas — tus consultas, con un color por estado: verde = ya "
+        "bajada, cian = tiene resultados sin bajar (elige), rojo = nadie "
+        "respondió, ámbar = respondieron pero no pasan tus filtros.",
+        "• Resultados — los ficheros de la búsqueda elegida. Los que no "
+        "pasan el filtro salen en gris, pero puedes bajarlos igual.",
+        "• Descargas — lo que se está bajando, con su estado.",
+        "",
+        "Arriba del todo hay un resumen con cuántas búsquedas hay, cuántas "
+        "con respuesta y cuántas descargas van bien.",
+    ]),
+    ("Actividad: botones (solo iconos)", [
+        "Pasa el ratón por encima y cada icono dice qué hace. Los clave:",
+        "• ⟳ Rebuscar canceladas — relanza solas todas las descargas que "
+        "fallaron, con la query con que se pidieron.",
+        "• 🧹 Vaciar lista — quita de slskd lo terminado (no toca ficheros).",
+        "• 🔍 Encontrar en Biblioteca (botón derecho) — salta a la canción "
+        "de tu biblioteca a la que corresponde esa búsqueda o descarga.",
+    ]),
+    ("Descargas: colocar lo bajado", [
+        "La pestaña Descargas lista lo que hay en tu carpeta de descargas.",
+        "• «🪄 Sustituir (auto)» — pone la descarga en el sitio del original "
+        "que le toca. Si Maceta la bajó, sabe cuál es; si no, lo busca por "
+        "parecido de audio. El original sustituido va a archivo/.",
+        "• «🔍 Encontrar en Biblioteca» (botón derecho) — localiza la "
+        "canción original.",
+    ]),
+    ("Sustituir con seguridad", [
+        "Cuando sustituyes, se abre «Comparar»: ves el espectro de la vieja "
+        "y la nueva lado a lado, y cada una tiene un reproductor con barra "
+        "para escuchar el mismo trozo en ambas antes de decidir.",
+        "El original siempre se guarda en archivo/.",
+    ]),
+    ("La carpeta archivo/ y limpiarla", [
+        "Cada sustitución deja el original en archivo/ (recuperable).",
+        "En Preferencias → Opciones → Descargas → «🧹 Limpiar archivo…» "
+        "devuelves a la biblioteca los originales que merezca la pena: "
+        "buenos (320+/lossless) y no duplicados. Las copias y lo de baja "
+        "calidad se quedan. Nada se borra.",
+    ]),
+    ("Estadísticas", [
+        "La pestaña 📊 calcula (en segundo plano) todo sobre tu colección: "
+        "calidad, formatos, espectro, ritmo, ranking de carpetas y "
+        "artistas, y cosas curiosas: el fake más descarado, duplicados, y "
+        "cuántos CDs, cintas o vinilos ocuparía si fuera física.",
+    ]),
+    ("Opciones (Preferencias → ⚙ Opciones…)", [
+        "Un panel con TODO lo configurable, por pestañas: umbral de calidad, "
+        "el Hz a partir del cual algo es FAKE, filtros de búsqueda, "
+        "sustitución automática, rebúsqueda, usuarios de Soulseek baneados, "
+        "slskd, actualizaciones, tipografía y colores. Cada ajuste lleva su "
+        "explicación al lado.",
+    ]),
+    ("Menú Archivo / Ver / Análisis", [
+        "ARCHIVO:",
+        "• Seleccionar carpeta… (⌘O) — elige la carpeta de música.",
+        "• Carpetas recientes — vuelve a una de las últimas que abriste.",
+        "• Exportar CSV… (⌘S) — guarda la tabla en un CSV.",
+        "• Salir (⌘Q).",
+        "VER:",
+        "• Ver espectro (⌘E) — gráfico del espectro de la canción.",
+        "• ▶ Reproducir / ⏹ Parar.",
+        "• Refrescar Actividad — relee búsquedas y descargas de slskd.",
+        "ANÁLISIS:",
+        "• Analizar selección (⌘R) / Analizar todas (⇧⌘R).",
+        "• 🔄 Re-analizar — ignora lo ya recordado y vuelve a medir.",
+        "• Convertir a MP3 320 — pasa a MP3 320 los lossless seleccionados.",
+    ]),
+    ("Menú Soulseek / Biblioteca", [
+        "SOULSEEK:",
+        "• Bajar con Soulseek… (⌘D) — busca reemplazo de la seleccionada.",
+        "• Bajar todas FAKE — busca reemplazo de todas las marcadas FAKE.",
+        "• Buscar por texto… (⌘F) — salta a la caja de búsqueda libre.",
+        "• Cancelar y borrar todo — limpia búsquedas y descargas de slskd.",
+        "• Limpiar búsquedas / descargas completadas.",
+        "• 🚫 Usuarios baneados… — lista de peers que ya no se usan "
+        "(se añaden solos los que te cancelan varias veces; editable).",
+        "• ⚙ Config Soulseek… — abre las opciones de slskd.",
+        "BIBLIOTECA:",
+        "• 🔗 Sustituir con descarga… — elige a mano qué descarga reemplaza "
+        "a la canción seleccionada.",
+        "• Borrar (a archivo/) (⌫) — mueve a archivo/, no borra.",
+        "• Vaciar lista — limpia la vista (no toca ficheros).",
+    ]),
+    ("Menú Preferencias / Ayuda", [
+        "PREFERENCIAS:",
+        "• Las cuatro casillas rápidas: Preguntar calidad, Sustituir "
+        "original, Autoconvertir FLAC→MP3 320, Forzar 320.",
+        "• ⚙ Opciones… (⌘,) — el panel completo de ajustes.",
+        "• 🎨 Colores… — cambia los colores de la interfaz.",
+        "AYUDA:",
+        "• 📖 Manual de Maceta — esta ventana.",
+        "• Comprobar / Configurar actualizaciones.",
+        "• 📜 Ver changelog — las novedades de cada versión.",
+        "• 📋 Abrir log — el registro para diagnosticar problemas.",
+        "• Acerca de Maceta.",
+    ]),
+    ("Clic derecho: menús contextuales", [
+        "Sobre una canción de Biblioteca (botón derecho) aparecen acciones "
+        "que no están en los botones:",
+        "• ▶ Reproducir · Ver espectro · Analizar.",
+        "• Bajar con Soulseek… · 🔗 Sustituir con descarga…",
+        "• Convertir a MP3 320 (si es lossless).",
+        "• 🏷 Renombrar inteligente / editar tags… — ordena el nombre del "
+        "fichero a partir de artista y título, o edita los tags.",
+        "• Copiar ruta · Mostrar en Finder · Borrar (a archivo/).",
+        "",
+        "En Actividad y Descargas, el botón derecho ofrece «🔍 Encontrar "
+        "en Biblioteca» y «💬 Escribir al usuario» (abre el chat con el "
+        "peer que tiene el fichero).",
+    ]),
+    ("Atajos", [
+        "• ⌘O — Seleccionar carpeta       • ⌘F — Buscar por texto",
+        "• ⌘R — Analizar selección        • ⇧⌘R — Analizar todas",
+        "• ⌘E — Ver espectro              • ⌘D — Bajar con Soulseek",
+        "• ⌘, — Opciones                  • Espacio — Reproducir",
+    ]),
+    ("Si algo va mal", [
+        "• Ayuda → «📋 Abrir log…» muestra el registro de lo que pasa.",
+        "• Las descargas de Soulseek necesitan slskd corriendo; Maceta lo "
+        "arranca sola si le diste su ruta en Opciones → slskd.",
+        "• Recuerda: nada se borra. Lo sustituido está en archivo/, lo "
+        "«borrado» en la papelera.",
+    ]),
+]
+
+
+class ManualDialog(tk.Toplevel):
+    """Manual de uso de Maceta, legible y con fondo oscuro."""
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Manual de Maceta")
+        self.geometry("720x620")
+        self.transient(master)
+
+        top = ttk.Frame(self, padding=(12, 10, 12, 4))
+        top.pack(fill=tk.X)
+        ttk.Label(top, text="📖 Manual de Maceta",
+                  font=("TkDefaultFont", 15, "bold")).pack(anchor="w")
+        ttk.Label(top, text="Todo lo que hace y cómo, sección a sección.",
+                  foreground="#9a9a9a").pack(anchor="w", pady=(2, 0))
+
+        body = ttk.Frame(self, padding=(12, 4))
+        body.pack(fill=tk.BOTH, expand=True)
+        txt = tk.Text(body, wrap="word", padx=10, pady=8,
+                      background="#141414", foreground="#ededed",
+                      insertbackground="#ededed", relief="flat",
+                      highlightthickness=0, font=("TkDefaultFont", 12))
+        vsb = ttk.Scrollbar(body, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=vsb.set)
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt.tag_configure("h", font=("TkDefaultFont", 13, "bold"),
+                          foreground="#8ab4f8", spacing1=12, spacing3=4)
+        for titulo, parrafos in MACETA_MANUAL:
+            txt.insert(tk.END, titulo + "\n", "h")
+            for p in parrafos:
+                txt.insert(tk.END, (p or "") + "\n")
+        txt.configure(state="disabled")
+
+        btns = ttk.Frame(self, padding=(12, 4, 12, 12))
+        btns.pack(fill=tk.X)
+        ttk.Button(btns, text="Entendido",
+                   command=self.destroy).pack(side=tk.RIGHT)
+
 
 class WhatsNewDialog(tk.Toplevel):
     """Popup con las novedades entre la versión anterior y la actual."""

@@ -3,6 +3,14 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.53
+
+- **Manual de Maceta integrado** (Ayuda → 📖 Manual de Maceta…). Una
+  ventana con 19 secciones que explican todo: cada pestaña, el explorador
+  de carpetas, los chips, cómo detecta los fakes, todos los menús entrada
+  por entrada, los menús de clic derecho, la carpeta archivo/, las
+  estadísticas, las opciones y los atajos de teclado.
+
 ## 0.4.52
 
 - **Maceta ya no borra nada de forma permanente — nunca.** Todo lo que
