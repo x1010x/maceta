@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.67
+
+- **Nueva pestaña «🎧 Wishlist».** Los temas que importas de Spotify ahora
+  van a una lista propia que se guarda entre sesiones, con su estado:
+  *pendiente · buscando · descargando · ✅ descargado · ✗ no encontrado*.
+  Desde ahí puedes buscar los pendientes, reintentar los que no salieron,
+  quitar temas o limpiar los ya descargados. Al importar de Spotify, Maceta
+  te lleva directo a esta pestaña.
+
 ## 0.4.66
 
 - **Importar de Spotify ahora avisa de lo que ya tienes.** Al traer los

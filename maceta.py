@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.66"
+VERSION = "0.4.67"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2885,6 +2885,42 @@ class AudioPlayer:
         return trans
 
 
+WISHLIST_PATH = Path.home() / ".maceta_wishlist.json"
+
+WISH_STATUS = {
+    "pendiente":     "• pendiente",
+    "en cola":       "⏳ en cola",
+    "buscando":      "🔎 buscando",
+    "descargando":   "↓ descargando",
+    "descargado":    "✅ descargado",
+    "no_encontrado": "✗ no encontrado",
+}
+WISH_COLORS = {
+    "pendiente":     "#888888",
+    "en cola":       "#8a6d00",
+    "buscando":      "#8a6d00",
+    "descargando":   "#0a5aa8",
+    "descargado":    "#0a7f2e",
+    "no_encontrado": "#b0261f",
+}
+
+
+def load_wishlist() -> list:
+    try:
+        d = json.loads(WISHLIST_PATH.read_text(encoding="utf-8"))
+        return d if isinstance(d, list) else []
+    except Exception:
+        return []
+
+
+def save_wishlist(items: list) -> None:
+    try:
+        WISHLIST_PATH.write_text(
+            json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 SPOTIFY_URL_RE = re.compile(
     r"open\.spotify\.com/(?:intl-[a-z]{2}/)?(playlist|album|track)/"
     r"([A-Za-z0-9]+)")
@@ -3158,7 +3194,14 @@ class MacetaApp(tk.Tk):
         # iid -> {cands, tried, query, min_br, n}: plan para subir a la
         # siguiente mejor versión si la descargada sigue FAKE.
         self._escalation: dict[str, dict] = {}
-        self._wish_counter = 0     # ids sintéticos para temas de Spotify
+        self.wishlist = load_wishlist()
+        for _it in self.wishlist:   # estados en vuelo no sobreviven reinicio
+            if _it.get("status") in ("buscando", "en cola", "descargando"):
+                _it["status"] = "pendiente"
+        _nums = [int(it["id"].split(":")[1]) for it in self.wishlist
+                 if str(it.get("id", "")).startswith("wish:")
+                 and it["id"].split(":")[1].isdigit()]
+        self._wish_counter = (max(_nums) + 1) if _nums else 0
         self.restore_last_folder_var = tk.BooleanVar(
             value=us["restore_last_folder"])
         self.use_index_var = tk.BooleanVar(value=us["use_index"])
@@ -3292,8 +3335,11 @@ class MacetaApp(tk.Tk):
         self.notebook.add(messages, text="💬 Mensajes")
         stats_tab = ttk.Frame(self.notebook)
         self.notebook.add(stats_tab, text="📊 Estadísticas")
+        self.wish_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.wish_frame, text="🎧 Wishlist")
 
         self._build_stats_tab(stats_tab)
+        self._build_wishlist_tab(self.wish_frame)
         self._build_biblio_tab(biblio)
         self._build_activity_tab(activity)
         self._build_downloads_tab(downloads)
@@ -6390,6 +6436,7 @@ class MacetaApp(tk.Tk):
                         continue
                     if "Errored" in state or "Cancelled" in state:
                         self._set_slsk_status(orig_iid, f"✗ {state}")
+                        self._wish_set_status(orig_iid, "no_encontrado")
                         self._release_active(orig_iid)
                         self.finalized_dl_keys.add(key)
                         if ("Cancelled" in state or "Rejected" in state) \
@@ -6400,8 +6447,15 @@ class MacetaApp(tk.Tk):
                         if local is None:
                             self._set_slsk_status(orig_iid, "esperando fichero…")
                             continue
-                        row = self.rows_by_iid.get(orig_iid)
                         self.finalized_dl_keys.add(key)
+                        if self._wish_item(orig_iid) is not None:
+                            # Tema de Wishlist: baja y listo, sin sustituir.
+                            self._wish_set_status(orig_iid, "descargado",
+                                                  path=str(local))
+                            self._set_slsk_status(orig_iid, "✓ descargado")
+                            self._release_active(orig_iid)
+                            continue
+                        row = self.rows_by_iid.get(orig_iid)
                         is_flac = local.suffix.lower() == ".flac"
                         if self.auto_flac_to_mp3_var.get() and is_flac:
                             self._set_slsk_status(orig_iid, "convirtiendo FLAC→MP3…")
@@ -8090,37 +8144,192 @@ class MacetaApp(tk.Tk):
         SpotifyImportDialog(self)
 
     def _enqueue_wishlist(self, tracks):
-        """Mete temas sueltos (artista, título) en la cola de búsqueda como
-        descargas nuevas (no sustituyen a nada: van a downloads/). Devuelve
-        cuántos se encolaron."""
+        """Añade temas (artista, título) a la Wishlist persistente (sin
+        duplicar) y lanza la búsqueda de los pendientes. Devuelve cuántos
+        se añadieron nuevos."""
+        existentes = {(it.get("artist", "").lower(), it.get("title", "").lower())
+                      for it in self.wishlist}
+        added = 0
+        for artista, titulo in tracks:
+            clave = (artista.lower(), titulo.lower())
+            if clave in existentes:
+                continue
+            existentes.add(clave)
+            titulo_q = re.sub(r"[\(\[].*?[\)\]]", "", titulo).strip()
+            query = f"{artista} {titulo_q}".strip()
+            if not query:
+                continue
+            self.wishlist.append({
+                "id": f"wish:{self._wish_counter}",
+                "artist": artista, "title": titulo,
+                "query": query, "status": "pendiente", "path": "",
+            })
+            self._wish_counter += 1
+            added += 1
+        save_wishlist(self.wishlist)
+        self._refresh_wishlist_tree()
+        if hasattr(self, "wish_frame"):
+            self.notebook.select(self.wish_frame)
+        self._wish_search_pending()
+        return added
+
+    def _wish_item(self, iid):
+        if not isinstance(iid, str) or not iid.startswith("wish:"):
+            return None
+        for it in self.wishlist:
+            if it["id"] == iid:
+                return it
+        return None
+
+    def _wish_set_status(self, iid, status, path=""):
+        it = self._wish_item(iid)
+        if it is None:
+            return
+        it["status"] = status
+        if path:
+            it["path"] = path
+        save_wishlist(self.wishlist)
+        if hasattr(self, "wish_tree") and self.wish_tree.exists(iid):
+            self.wish_tree.item(iid, values=(WISH_STATUS.get(status, status),),
+                                tags=(status,))
+            self._update_wish_count()
+
+    def _wish_search_pending(self, only=None):
+        """Encola los temas pendientes/no-encontrados de la Wishlist."""
         client = self._slsk_client()
         if client is None:
             messagebox.showwarning(
                 "Maceta", "Configura primero slskd (⚙ Config Soulseek…).")
             return 0
-        added = 0
-        for artista, titulo in tracks:
-            titulo_q = re.sub(r"[\(\[].*?[\)\]]", "", titulo).strip()
-            query = f"{artista} {titulo_q}".strip()
-            if not query:
+        queued = 0
+        for it in self.wishlist:
+            if only is not None and it["id"] not in only:
                 continue
-            sid = f"wish:{self._wish_counter}"
-            self._wish_counter += 1
-            nombre = f"{artista} - {titulo}".strip(" -")
-            self.active_by_iid[sid] = "buscando"
+            if it.get("status") == "descargado":
+                continue
+            if it["id"] in self.active_by_iid:
+                continue
+            it["status"] = "en cola"
+            self.active_by_iid[it["id"]] = "buscando"
+            nombre = f'{it.get("artist", "")} - {it.get("title", "")}'.strip(" -")
             self._search_queue.append(
-                (sid, {"name": nombre, "path": None}, query, False))
-            added += 1
-        if not added:
-            return 0
-        self._batch_total += added
-        self.status.set(f"{len(self._search_queue)} en cola de búsqueda…")
-        self._refresh_activity_stats_soft()
-        if not self._search_running:
-            self._search_running = True
-            threading.Thread(target=self._search_queue_worker,
-                             args=(client,), daemon=True).start()
-        return added
+                (it["id"], {"name": nombre, "path": None}, it["query"], False))
+            queued += 1
+        if queued:
+            self._batch_total += queued
+            self.status.set(f"{len(self._search_queue)} en cola de búsqueda…")
+            self._refresh_activity_stats_soft()
+            if not self._search_running:
+                self._search_running = True
+                threading.Thread(target=self._search_queue_worker,
+                                 args=(client,), daemon=True).start()
+        save_wishlist(self.wishlist)
+        self._refresh_wishlist_tree()
+        return queued
+
+    def _build_wishlist_tab(self, parent):
+        bar = ttk.Frame(parent, padding=(8, 6, 8, 0))
+        bar.pack(fill=tk.X)
+        ttk.Label(bar, text="🎧 Wishlist").pack(side=tk.LEFT)
+        icon_button(bar, "🎵", "Importar una playlist de Spotify",
+                    self.on_spotify_import, side=tk.LEFT, padx=(10, 0))
+        icon_button(bar, "🔎", "Buscar y bajar los pendientes",
+                    self.on_wish_search_pending, side=tk.LEFT, padx=(10, 0))
+        icon_button(bar, "↻", "Reintentar los seleccionados",
+                    self.on_wish_retry, side=tk.LEFT)
+        icon_button(bar, "🗑", "Quitar los seleccionados de la lista",
+                    self.on_wish_remove, side=tk.LEFT, padx=(10, 0))
+        icon_button(bar, "🧹", "Quitar de la lista los ya descargados",
+                    self.on_wish_clear_done, side=tk.LEFT)
+        self.wish_count = ttk.Label(bar, text="", foreground="#888")
+        self.wish_count.pack(side=tk.RIGHT)
+
+        ttk.Label(parent, padding=(8, 2, 8, 0), foreground="#888",
+                  wraplength=900, justify="left",
+                  text="Temas que quieres conseguir (importados de Spotify). "
+                       "Maceta los busca en Soulseek y los baja a la carpeta "
+                       "de descargas. La lista se guarda entre sesiones.").pack(
+            fill=tk.X)
+
+        wrap = ttk.Frame(parent, padding=(8, 4))
+        wrap.pack(fill=tk.BOTH, expand=True)
+        self.wish_tree = ttk.Treeview(
+            wrap, columns=("estado",), selectmode="extended")
+        self.wish_tree.heading("#0", text="Tema")
+        self.wish_tree.heading("estado", text="Estado")
+        self.wish_tree.column("#0", width=460, stretch=True)
+        self.wish_tree.column("estado", width=150, anchor="w", stretch=False)
+        vsb = ttk.Scrollbar(wrap, orient="vertical",
+                            command=self.wish_tree.yview)
+        self.wish_tree.configure(yscrollcommand=vsb.set)
+        self.wish_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        for st, col in WISH_COLORS.items():
+            self.wish_tree.tag_configure(st, foreground=col)
+        self._refresh_wishlist_tree()
+
+    def _update_wish_count(self):
+        if not hasattr(self, "wish_count"):
+            return
+        done = sum(1 for it in self.wishlist
+                   if it.get("status") == "descargado")
+        falta = sum(1 for it in self.wishlist
+                    if it.get("status") == "no_encontrado")
+        txt = f"{len(self.wishlist)} temas · {done} descargados"
+        if falta:
+            txt += f" · {falta} sin encontrar"
+        self.wish_count.configure(text=txt)
+
+    def _refresh_wishlist_tree(self):
+        if not hasattr(self, "wish_tree"):
+            return
+        self.wish_tree.delete(*self.wish_tree.get_children())
+        for it in self.wishlist:
+            nombre = (f'{it.get("artist", "")} - {it.get("title", "")}'
+                      .strip(" -"))
+            st = it.get("status", "pendiente")
+            self.wish_tree.insert("", tk.END, iid=it["id"], text=nombre,
+                                  values=(WISH_STATUS.get(st, st),),
+                                  tags=(st,))
+        self._update_wish_count()
+
+    def on_wish_search_pending(self):
+        n = self._wish_search_pending()
+        if n:
+            self.status.set(f"Buscando {n} tema(s) de la Wishlist…")
+        else:
+            self.status.set("No hay temas pendientes en la Wishlist.")
+
+    def on_wish_retry(self):
+        sel = [i for i in self.wish_tree.selection() if self._wish_item(i)]
+        if not sel:
+            messagebox.showinfo("Maceta", "Selecciona temas para reintentar.")
+            return
+        for iid in sel:
+            it = self._wish_item(iid)
+            if it and it["id"] not in self.active_by_iid:
+                it["status"] = "pendiente"
+        self._wish_search_pending(only=set(sel))
+
+    def on_wish_remove(self):
+        sel = set(self.wish_tree.selection())
+        if not sel:
+            messagebox.showinfo("Maceta", "Selecciona temas para quitar.")
+            return
+        for iid in sel:
+            self.active_by_iid.pop(iid, None)
+        self.wishlist = [it for it in self.wishlist if it["id"] not in sel]
+        save_wishlist(self.wishlist)
+        self._refresh_wishlist_tree()
+
+    def on_wish_clear_done(self):
+        antes = len(self.wishlist)
+        self.wishlist = [it for it in self.wishlist
+                         if it.get("status") != "descargado"]
+        quitados = antes - len(self.wishlist)
+        save_wishlist(self.wishlist)
+        self._refresh_wishlist_tree()
+        self.status.set(f"Quitados {quitados} ya descargados de la Wishlist.")
 
     def cancel_search_queue(self, iids=None):
         """Quita canciones de la cola de búsqueda (las que aún no se han
@@ -8152,6 +8361,7 @@ class MacetaApp(tk.Tk):
                      or build_query(row, self.query_mode_var.get())
                      or row["name"])
             self.after(0, self._set_slsk_status, iid, f"buscando: {query}")
+            self.after(0, self._wish_set_status, iid, "buscando")
             self.after(0, self._refresh_activity_stats_soft)
             t0 = time.time()
             log.info("search start iid=%s query=%r", iid, query)
@@ -8165,8 +8375,10 @@ class MacetaApp(tk.Tk):
                      iid, ok, time.time() - t0, text)
             if ok:
                 self.after(0, self._set_slsk_status, iid, text)
+                self.after(0, self._wish_set_status, iid, "descargando")
             else:
                 self.after(0, self._set_slsk_status, iid, f"✗ {text}")
+                self.after(0, self._wish_set_status, iid, "no_encontrado")
                 self.after(0, self._release_active, iid)
             procesadas += 1
             self.after(0, self._refresh_activity_stats_soft)
@@ -8457,6 +8669,25 @@ MACETA_MANUAL = [
         "• Descargas — los ficheros que has bajado, para colocarlos.",
         "• Mensajes — el chat privado de Soulseek.",
         "• Estadísticas — números de tu colección, con cosas curiosas.",
+        "• 🎧 Wishlist — temas que quieres conseguir (p. ej. de una "
+        "playlist de Spotify), con su estado de descarga.",
+    ]),
+    ("🎧 Wishlist: importar de Spotify", [
+        "Pega el enlace de una playlist, álbum o canción de Spotify y "
+        "Maceta saca la lista de temas y los busca en Soulseek para "
+        "bajarlos. No hace falta cuenta de Spotify.",
+        "",
+        "Cómo: en Actividad Soulseek o en la pestaña Wishlist, pulsa el "
+        "botón 🎧 / 🎵, pega el enlace y dale a «Traer temas». Maceta marca "
+        "en amarillo los que ya tienes en la biblioteca (para que compares "
+        "y decidas) y deja seleccionados solo los que faltan. Con «Añadir "
+        "seleccionados» entran en la Wishlist y empieza a buscarlos.",
+        "",
+        "La Wishlist se guarda entre sesiones. Cada tema muestra su estado: "
+        "pendiente, buscando, descargando, ✅ descargado o ✗ no encontrado. "
+        "Botones: 🔎 buscar los pendientes, ↻ reintentar los seleccionados, "
+        "🗑 quitar de la lista, 🧹 limpiar los ya descargados. Los ficheros "
+        "bajados aparecen en la carpeta y pestaña de Descargas.",
     ]),
     ("Biblioteca: el explorador de carpetas (izquierda)", [
         "A la izquierda está el árbol de tus carpetas, con cuántos temas, "
