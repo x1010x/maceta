@@ -3,6 +3,19 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.55
+
+- **Diagnóstico de Soulseek** (menú Soulseek → 🩺 Diagnóstico de
+  Soulseek…). Revisa de una vez todo lo que suele fallar y lo arregla:
+  que slskd responda, que esté conectado a la red, que **descargue donde
+  Maceta mira** (si no, un botón lo arregla editando su config y
+  reiniciándolo), y que **compartas algo** (si tu carpeta está vacía te
+  avisa — es la causa de que muchas descargas se queden en cola). Cada
+  línea con su ✓/⚠/✗ y un botón de arreglo donde lo hay.
+- El instalador descarga también **fpcalc** (la huella acústica de la
+  versión anterior), así que la identificación precisa de canciones
+  funciona de serie.
+
 ## 0.4.54
 
 - **Verificación de canciones con huella acústica (Chromaprint).** Para

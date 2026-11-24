@@ -227,6 +227,32 @@ else
     fi
 fi
 
+# ---------- fpcalc (Chromaprint, para identificar canciones) ----------
+step "fpcalc (huella acústica, identifica canciones de verdad)"
+FPCALC_DEST="$(dirname "$PY")/fpcalc"
+if [ -x "$FPCALC_DEST" ] || command -v fpcalc >/dev/null 2>&1; then
+    ok "fpcalc ya disponible"
+elif [ "$DRY" = "1" ]; then
+    ok "[dry-run] descargaría fpcalc"
+else
+    case "$ARCH" in arm64) FA="arm64" ;; *) FA="x86_64" ;; esac
+    URL="https://github.com/acoustid/chromaprint/releases/download/v1.6.2/chromaprint-fpcalc-1.6.2-macos-${FA}.tar.gz"
+    TMPF="$(mktemp -d)"
+    if curl -fsSL "$URL" -o "$TMPF/fp.tgz" && tar xzf "$TMPF/fp.tgz" -C "$TMPF"; then
+        BIN="$(find "$TMPF" -name fpcalc -type f | head -1)"
+        if [ -n "$BIN" ]; then
+            cp "$BIN" "$FPCALC_DEST"
+            xattr -dr com.apple.quarantine "$FPCALC_DEST" 2>/dev/null || true
+            chmod +x "$FPCALC_DEST"
+            ok "fpcalc instalado"
+        else
+            warn "No encontré fpcalc en el paquete; Maceta usará el método antiguo."
+        fi
+    else
+        warn "No pude bajar fpcalc; Maceta usará el método antiguo (funciona igual, menos preciso)."
+    fi
+fi
+
 # ---------- slskd (opcional) ----------
 SLSKD_DIR="${SLSKD_DIR:-$HOME/slskd}"
 # IMPORTANTE: en macOS slskd busca su config en ~/Library/Application

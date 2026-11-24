@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.54"
+VERSION = "0.4.55"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -1331,6 +1331,72 @@ SLSKD_RECONNECT_TIMEOUT_S = 10.0
 SLSKD_STARTUP_POLL_S = 0.5
 
 
+def slskd_yml_path() -> Path:
+    """Dónde vive el slskd.yml. En macOS slskd usa Application Support;
+    en Linux, ~/.local/share. Devuelve el que exista, o el preferido."""
+    home = Path.home()
+    cands = [
+        home / "Library" / "Application Support" / "slskd" / "slskd.yml",
+        home / ".local" / "share" / "slskd" / "slskd.yml",
+    ]
+    for c in cands:
+        if c.exists():
+            return c
+    return cands[0] if sys.platform == "darwin" else cands[1]
+
+
+def slskd_download_dir() -> str:
+    """Carpeta donde slskd descarga, leída de su yml. '' si no está fijada
+    (entonces slskd usa su carpeta por defecto, no la de Maceta)."""
+    yml = slskd_yml_path()
+    try:
+        txt = yml.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    dentro = False
+    for ln in txt.splitlines():
+        if re.match(r"^directories:\s*$", ln):
+            dentro = True
+            continue
+        if dentro:
+            m = re.match(r"^\s+downloads:\s*(.+?)\s*$", ln)
+            if m:
+                return m.group(1).strip().strip("\"'")
+            if re.match(r"^\S", ln):
+                break
+    return ""
+
+
+def slskd_set_download_dir(carpeta: str) -> bool:
+    """Fija en el yml de slskd que descargue en `carpeta` (y los parciales
+    en su subcarpeta .incomplete). Crea las carpetas. No borra nada: hace
+    copia .bak del yml antes de tocarlo."""
+    yml = slskd_yml_path()
+    try:
+        txt = yml.read_text(encoding="utf-8") if yml.exists() else ""
+    except OSError:
+        return False
+    try:
+        Path(carpeta).mkdir(parents=True, exist_ok=True)
+        (Path(carpeta) / ".incomplete").mkdir(exist_ok=True)
+    except OSError:
+        pass
+    # quitar cualquier bloque directories: activo
+    txt = re.sub(r"(?m)^directories:\n(?:[ \t]+.*\n)*", "", txt)
+    bloque = (f"directories:\n  downloads: {carpeta}\n"
+              f"  incomplete: {carpeta}/.incomplete\n")
+    nuevo = txt.rstrip() + "\n" + bloque
+    try:
+        yml.parent.mkdir(parents=True, exist_ok=True)
+        if yml.exists():
+            shutil.copy2(str(yml), str(yml) + ".bak")
+        yml.write_text(nuevo, encoding="utf-8")
+        return True
+    except OSError as e:
+        log.warning("no se pudo escribir %s: %s", yml, e)
+        return False
+
+
 def _slskd_status(url: str, key: str):
     """None si slskd no responde; si no, el JSON de /api/v0/application."""
     try:
@@ -1693,6 +1759,32 @@ class SlskdClient:
     def list_downloads(self) -> list:
         return self._request(
             "GET", "/api/v0/transfers/downloads").json() or []
+
+    def server_state(self) -> dict:
+        """Estado de la conexión con la red Soulseek (de /application)."""
+        try:
+            app = self._request("GET", "/api/v0/application",
+                                timeout=5).json() or {}
+            return app.get("server") or {}
+        except Exception:
+            return {}
+
+    def options(self) -> dict:
+        """La configuración efectiva de slskd (directorios, shares…)."""
+        try:
+            return self._request("GET", "/api/v0/options", timeout=5).json() or {}
+        except Exception:
+            return {}
+
+    def shares(self) -> list:
+        """Carpetas que slskd comparte. Vacío = no compartes nada."""
+        try:
+            d = self._request("GET", "/api/v0/shares", timeout=5).json()
+        except Exception:
+            return []
+        if isinstance(d, dict):
+            return d.get("local") or d.get("directories") or []
+        return d or []
 
     def cancel_download(self, username: str, transfer_id: str,
                         remove: bool = False) -> None:
@@ -3205,6 +3297,8 @@ class MacetaApp(tk.Tk):
         m_sk.add_command(label="Limpiar descargas completadas",
                          command=self.on_clear_downloads)
         m_sk.add_separator()
+        m_sk.add_command(label="🩺 Diagnóstico de Soulseek…",
+                         command=self.on_soulseek_diag)
         m_sk.add_command(label="🚫 Usuarios baneados…",
                          command=self.on_banned_peers)
         m_sk.add_command(label="⚙ Config Soulseek…",
@@ -5207,6 +5301,9 @@ class MacetaApp(tk.Tk):
 
     def on_banned_peers(self):
         BannedPeersDialog(self)
+
+    def on_soulseek_diag(self):
+        SoulseekDiagDialog(self)
 
     def on_options(self, tab=None):
         OptionsDialog(self, tab=tab)
@@ -9231,6 +9328,217 @@ COLOR_ESSENTIALS = [
     ("verdict_FAKE",     "Texto FAKE"),
     ("verdict_LOSSLESS", "Texto LOSSLESS"),
 ]
+
+
+class SoulseekDiagDialog(tk.Toplevel):
+    """Revisa que Soulseek esté bien y arregla lo que pueda.
+
+    Comprueba lo que nos ha dado problemas una y otra vez: que slskd
+    responda, que esté conectado a la red, que descargue DONDE Maceta
+    mira, y que compartas algo (si no, las descargas se quedan en cola)."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Diagnóstico de Soulseek")
+        self.geometry("680x520")
+        self.transient(app)
+
+        top = ttk.Frame(self, padding=(14, 12, 14, 4))
+        top.pack(fill=tk.X)
+        ttk.Label(top, text="🩺 Diagnóstico de Soulseek",
+                  font=("TkDefaultFont", 15, "bold")).pack(side=tk.LEFT)
+        ttk.Button(top, text="↻ Revisar de nuevo",
+                   command=self._run).pack(side=tk.RIGHT)
+
+        self.rows_frame = ttk.Frame(self, padding=(14, 4))
+        self.rows_frame.pack(fill=tk.BOTH, expand=True)
+        self.status_var = tk.StringVar(value="Revisando…")
+        ttk.Label(self, textvariable=self.status_var, foreground="#888",
+                  padding=(14, 0, 14, 10)).pack(fill=tk.X)
+        self._run()
+
+    def _run(self):
+        for w in self.rows_frame.winfo_children():
+            w.destroy()
+        self.status_var.set("Revisando…")
+        threading.Thread(target=self._check_worker, daemon=True).start()
+
+    def _check_worker(self):
+        cfg = load_config()
+        url = (cfg.get("slskd_url") or "").strip()
+        key = (cfg.get("slskd_api_key") or "").strip()
+        binario = (cfg.get("slskd_binary") or "").strip()
+        checks = []
+
+        # 1. configurado
+        if url and key:
+            checks.append(("ok", "slskd configurado en Maceta",
+                           f"{url}", None, None))
+        else:
+            checks.append(("bad", "slskd sin configurar",
+                           "Falta URL o API key.",
+                           "Abrir Opciones", "opciones"))
+            self.after(0, self._render, checks)
+            return
+
+        client = SlskdClient(url, key)
+
+        # 2. responde
+        try:
+            info = client.ping()
+            ver = info.get("version", {})
+            ver = ver.get("current") if isinstance(ver, dict) else ver
+            checks.append(("ok", "slskd responde", f"versión {ver}", None, None))
+        except Exception as e:
+            arranca = ("Arrancar slskd", "arrancar") if binario else (
+                None, None)
+            checks.append(("bad", "slskd no responde",
+                           f"Nadie contesta en {url}. ¿Está arrancado?",
+                           arranca[0], arranca[1]))
+            self.after(0, self._render, checks)
+            return
+
+        # 3. conectado a Soulseek
+        srv = client.server_state()
+        if srv.get("isLoggedIn"):
+            checks.append(("ok", "Conectado a Soulseek",
+                           f"estado: {srv.get('state')}", None, None))
+        else:
+            checks.append(("bad", "No conectado a Soulseek",
+                           "Revisa usuario/contraseña en el slskd.yml.",
+                           None, None))
+
+        # 4. descarga donde Maceta mira
+        dl = slskd_download_dir()
+        quiere = str(DOWNLOADS_DIR)
+        if dl and Path(dl).resolve() == Path(quiere).resolve():
+            checks.append(("ok", "Descarga donde Maceta mira", dl, None, None))
+        elif not dl:
+            checks.append(("warn", "slskd descarga en su carpeta por defecto",
+                           f"Maceta mira en {quiere}, pero slskd no tiene "
+                           "fijado dónde descargar: lo que bajes no "
+                           "aparecerá en Descargas.",
+                           "Arreglar", "fix_dir"))
+        else:
+            checks.append(("warn", "slskd descarga en otro sitio",
+                           f"slskd → {dl}\nMaceta mira → {quiere}",
+                           "Arreglar", "fix_dir"))
+
+        # 5. comparte algo
+        shares = client.shares()
+        if shares:
+            carpetas = [sh.get("localPath") or sh.get("raw") or ""
+                        for sh in shares if isinstance(sh, dict)]
+            ficheros = 0
+            for c in carpetas:
+                try:
+                    ficheros += sum(1 for _ in Path(c).rglob("*")
+                                    if _.is_file())
+                except Exception:
+                    pass
+            if ficheros > 0:
+                checks.append(("ok", f"Compartes {ficheros} ficheros",
+                               ", ".join(Path(c).name for c in carpetas),
+                               None, None))
+            else:
+                checks.append(("warn", "Compartes una carpeta, pero vacía",
+                               "Muchos peers rechazan a quien no comparte "
+                               "nada y tus descargas se quedan en cola. "
+                               "Copia algo de música a la carpeta "
+                               "compartida.",
+                               "Abrir carpeta", "abrir_share"))
+                self._share_dir = carpetas[0] if carpetas else ""
+        else:
+            checks.append(("bad", "No compartes nada",
+                           "Es la causa más común de que las descargas no "
+                           "arranquen. Comparte una carpeta en el "
+                           "slskd.yml.", None, None))
+
+        # 6. mensajes sin leer
+        try:
+            convs = client.list_conversations()
+            sin_leer = sum(1 for c in convs
+                           if c.get("unAcknowledgedMessageCount", 0)
+                           or c.get("hasUnAcknowledgedMessages"))
+            if sin_leer:
+                checks.append(("warn", f"{sin_leer} conversaciones sin leer",
+                               "Suelen ser avisos de peers (a menudo: "
+                               "'comparte algo'). Míralas en la pestaña "
+                               "Mensajes.", None, None))
+        except Exception:
+            pass
+
+        self.after(0, self._render, checks)
+
+    def _render(self, checks):
+        for w in self.rows_frame.winfo_children():
+            w.destroy()
+        icon = {"ok": ("✓", "#1a7f37"), "warn": ("⚠", "#c9890a"),
+                "bad": ("✗", "#d04a3f")}
+        malos = sum(1 for c in checks if c[0] != "ok")
+        for estado, titulo, detalle, boton, accion in checks:
+            sym, col = icon[estado]
+            fila = ttk.Frame(self.rows_frame, padding=(0, 5))
+            fila.pack(fill=tk.X)
+            tk.Label(fila, text=sym, fg=col, font=("TkDefaultFont", 14, "bold"),
+                     width=2).pack(side=tk.LEFT, anchor="n")
+            col_txt = ttk.Frame(fila)
+            col_txt.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            tk.Label(col_txt, text=titulo, anchor="w",
+                     font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+            if detalle:
+                tk.Label(col_txt, text=detalle, anchor="w", justify="left",
+                         fg="#999", wraplength=460).pack(anchor="w")
+            if boton and accion:
+                ttk.Button(fila, text=boton,
+                           command=lambda a=accion: self._do(a)
+                           ).pack(side=tk.RIGHT, anchor="n")
+        self.status_var.set(
+            "Todo correcto ✓" if not malos
+            else f"{malos} cosa(s) por revisar")
+
+    def _do(self, accion):
+        if accion == "opciones":
+            self.app.on_options(tab="slskd")
+        elif accion == "arrancar":
+            self.status_var.set("Arrancando slskd…")
+            msgs, failed = maybe_launch_helpers()
+            self.status_var.set(" · ".join(msgs) or "hecho")
+            self.after(1500, self._run)
+        elif accion == "fix_dir":
+            if not messagebox.askyesno(
+                "Maceta",
+                f"Fijar que slskd descargue en:\n{DOWNLOADS_DIR}\n\n"
+                "Se edita su configuración (con copia de seguridad) y se "
+                "reinicia slskd. Nada se borra."):
+                return
+            self.status_var.set("Arreglando y reiniciando slskd…")
+            threading.Thread(target=self._fix_dir_worker, daemon=True).start()
+        elif accion == "abrir_share":
+            d = getattr(self, "_share_dir", "")
+            if d and sys.platform == "darwin":
+                subprocess.Popen(["open", d])
+
+    def _fix_dir_worker(self):
+        ok = slskd_set_download_dir(str(DOWNLOADS_DIR))
+        if ok:
+            cfg = load_config()
+            binario = (cfg.get("slskd_binary") or "").strip()
+            if binario and Path(binario).exists():
+                try:
+                    subprocess.run(["pkill", "-9", "-f",
+                                    Path(binario).name], check=False)
+                except Exception:
+                    pass
+                time.sleep(3)
+                _spawn_detached([binario], cwd=str(Path(binario).parent),
+                                log_path=SLSKD_LOG)
+                time.sleep(6)
+        self.after(0, lambda: self.status_var.set(
+            "Arreglado — slskd descarga ahora donde Maceta mira"
+            if ok else "No se pudo editar el slskd.yml"))
+        self.after(1500, self._run)
 
 
 class BannedPeersDialog(tk.Toplevel):
