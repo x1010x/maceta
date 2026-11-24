@@ -3,6 +3,22 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.58
+
+- **Arreglado: canciones que volvían a «sin analizar» al reabrir.** El
+  índice validaba la fecha del fichero de forma estricta, así que dos
+  copias idénticas de una canción (en carpetas distintas, o con la fecha
+  tocada) no se reconocían entre sí: analizabas una y la otra seguía
+  pendiente, turnándose sin fin. Ahora manda la huella del contenido: si
+  es la misma canción, su análisis vale aunque cambie la fecha. En una
+  biblioteca real bajó de 36 pendientes «fantasma» a solo las 2 que de
+  verdad están corruptas.
+- **Rebúsquedas relacionadas**: al seleccionar una búsqueda en Actividad,
+  las del mismo tema (variantes/rebúsquedas del mismo artista) se
+  **resaltan en verde** solas. Y botón derecho sobre una descarga →
+  «🔗 Búsquedas relacionadas» salta a su búsqueda y resalta las parientes.
+  (Se quitó el buscador de texto anterior.)
+
 ## 0.4.57
 
 - **Filtro de búsquedas** en Actividad Soulseek: una caja 🔎 encima del

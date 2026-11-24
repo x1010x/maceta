@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.57"
+VERSION = "0.4.58"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -891,7 +891,12 @@ def index_entry(path: str, want_hash: bool = True) -> tuple:
     if not digest:
         return "", {}
     e = idx.get(digest)
-    if e and e.get("size") == size and e.get("mtime") == mtime:
+    # El hash es (tamaño + cabecera + cola): si coincide, el contenido es
+    # el mismo, así que la entrada vale aunque el mtime difiera. Eso pasa
+    # con copias idénticas de la misma canción en carpetas distintas (o
+    # tras tocar la fecha del fichero): antes cada una invalidaba a la
+    # otra y una quedaba siempre "pendiente".
+    if e:
         _paths_map()[str(path)] = digest
         return digest, e
     return digest, {}
@@ -4602,15 +4607,8 @@ class MacetaApp(tk.Tk):
         top_paned.add(s_frame, weight=1)
         s_head = ttk.Frame(s_frame)
         s_head.pack(fill=tk.X)
-        ttk.Label(s_head, text="🔎").pack(side=tk.LEFT)
-        self.search_filter_var = tk.StringVar()
-        fe = ttk.Entry(s_head, textvariable=self.search_filter_var, width=20)
-        fe.pack(side=tk.LEFT, padx=(2, 6))
-        fe.bind("<KeyRelease>", lambda _e: self._apply_search_filter())
-        ttk.Button(s_head, text="✕", width=2,
-                   command=lambda: (self.search_filter_var.set(""),
-                                    self._apply_search_filter())
-                   ).pack(side=tk.LEFT)
+        ttk.Label(s_head, text="Búsquedas",
+                  foreground="#888").pack(side=tk.LEFT)
         self._font_controls(s_head, lambda: self.search_tree, "searches")
         s_cols = ("num", "query", "state", "responses", "files")
         s_wrap, self.search_tree = make_scrollable_tree(
@@ -4627,6 +4625,9 @@ class MacetaApp(tk.Tk):
         # ninguna: hay cosa que elegir aquí. Cian para que no se confunda
         # con las que siguen en curso (negro).
         self.search_tree.tag_configure("pendiente", foreground="#2aa6c0")
+        # Fondo para resaltar las rebúsquedas del mismo tema que la
+        # seleccionada (variantes que se han ido probando).
+        self.search_tree.tag_configure("related", background="#2d3b1f")
         self._search_usable = {}
         # #N que ya han terminado de bajar. Se acumula y no se vacía:
         # limpiar la lista de descargas de slskd no debe perder el verde.
@@ -4651,7 +4652,8 @@ class MacetaApp(tk.Tk):
         icon_button(s_btns, "↻", "Refrescar", self._activity_tick,
                     side=tk.LEFT)
         self.search_tree.bind("<<TreeviewSelect>>",
-                              lambda _e: (self._on_search_selected(),
+                              lambda _e: (self._highlight_related(),
+                                          self._on_search_selected(),
                                           self._sync_dl_from_search()))
         self.search_tree.bind("<Double-1>",
                               lambda _e: self._on_search_selected())
@@ -5864,37 +5866,54 @@ class MacetaApp(tk.Tk):
         self.after(0, self._activity_reconcile, downloads, local_lookup)
         self.after(4000, self._activity_tick)
 
-    def _apply_search_filter(self):
-        """Oculta las búsquedas cuya query no contiene el texto del filtro.
-        Útil para encontrar las de un artista entre muchas."""
-        q = self.search_filter_var.get().strip().lower()
-        detached = getattr(self, "_search_detached", {})
-        # Reattach todo lo oculto antes de volver a filtrar.
-        for iid in list(detached.keys()):
-            try:
-                self.search_tree.reattach(iid, "", "end")
-            except Exception:
-                pass
-        detached.clear()
-        if q:
-            for iid in list(self.search_tree.get_children("")):
-                if q not in self.search_tree.set(iid, "query").lower():
-                    try:
-                        self.search_tree.detach(iid)
-                        detached[iid] = True
-                    except Exception:
-                        pass
-        self._search_detached = detached
+    @staticmethod
+    def _query_keys(texto):
+        """Palabras distintivas de una query (artista/título), en
+        minúsculas y sin relleno — para decidir si dos búsquedas son del
+        mismo tema."""
+        return {w.lower() for w in query_tokens(texto)
+                if len(w) > 3 and w.lower() not in QUERY_NOISE}
+
+    def _highlight_related(self):
+        """Resalta las búsquedas que comparten tema con la seleccionada
+        (variantes/rebúsquedas del mismo artista o canción)."""
+        if not hasattr(self, "search_tree"):
+            return
+        sel = self.search_tree.selection()
+        # limpiar resaltado anterior
+        for iid in self.search_tree.get_children(""):
+            tags = [t for t in self.search_tree.item(iid, "tags")
+                    if t != "related"]
+            self.search_tree.item(iid, tags=tags)
+        if not sel:
+            return
+        claves = self._query_keys(self.search_tree.set(sel[0], "query"))
+        if not claves:
+            return
+        rel = 0
+        for iid in self.search_tree.get_children(""):
+            if iid in sel:
+                continue
+            otras = self._query_keys(self.search_tree.set(iid, "query"))
+            if claves & otras:          # comparten al menos una palabra clave
+                tags = list(self.search_tree.item(iid, "tags")) + ["related"]
+                self.search_tree.item(iid, tags=tags)
+                rel += 1
+        if rel:
+            self.status.set(f"🔗 {rel} búsqueda(s) relacionada(s) resaltadas")
 
     def buscar_relacionadas(self, texto):
-        """Pone en el filtro de búsquedas las palabras distintivas de un
-        texto (artista), para ver todas las búsquedas relacionadas."""
-        toks = query_tokens(texto)
-        # la palabra más larga suele ser la distintiva (el artista)
-        clave = max(toks, key=len) if toks else ""
-        self.search_filter_var.set(clave)
-        self._apply_search_filter()
+        """Selecciona la primera búsqueda que casa con el texto y resalta
+        sus relacionadas. Se llama desde el menú de una descarga."""
+        claves = self._query_keys(texto)
         self.notebook.select(1)
+        for iid in self.search_tree.get_children(""):
+            if claves & self._query_keys(self.search_tree.set(iid, "query")):
+                self.search_tree.selection_set(iid)
+                self.search_tree.see(iid)
+                self._highlight_related()
+                return
+        self.status.set("No hay búsquedas relacionadas con eso")
 
     def _activity_render(self, searches, downloads):
         for ug in downloads:
@@ -5999,8 +6018,8 @@ class MacetaApp(tk.Tk):
                 self._activity_dl_vals.pop(iid, None)
                 if self.dl_tree.exists(iid):
                     self.dl_tree.delete(iid)
-        if self.search_filter_var.get().strip():
-            self._apply_search_filter()
+        if self.search_tree.selection():
+            self._highlight_related()
         self._update_activity_stats(searches, downloads)
 
     def _render_missing_downloads(self, searches) -> set:
