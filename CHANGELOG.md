@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.64
+
+- **Las sustituciones automáticas ya aparecen en «Sustituidas» al
+  instante.** Antes, cuando Maceta sustituía sola una canción (tras
+  bajarla y verificarla), el fichero se cambiaba bien pero el contador del
+  chip no se actualizaba: la fila parecía desaparecer y no salía en
+  «Sustituidas» hasta re-escanear. Ahora refresca igual que la sustitución
+  manual. (Las que sustituías a mano siempre funcionaron.)
+
 ## 0.4.63
 
 - **Arreglo de la escalada:** cuando una descarga resulta ser *otra*

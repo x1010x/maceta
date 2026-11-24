@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.63"
+VERSION = "0.4.64"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -6281,10 +6281,18 @@ class MacetaApp(tk.Tk):
             row["detail"] = ""
             row["slsk_status"] = f"✓ sustituido ({reason})"
             index_mark_substituted(str(new_path), reason)
+            remove_download_link(Path(local_path).name)
             self._escalation.pop(orig_iid, None)
-            self.tree.item(orig_iid, text=row["name"],
-                           values=self._row_values(row), tags=("PENDING",))
             self._release_active(orig_iid)
+            if orig_iid in self.rows_by_iid and self.tree.exists(orig_iid):
+                self.tree.item(orig_iid, text=row["name"],
+                               values=self._row_values(row), tags=("PENDING",))
+            # Igual que do_manual_substitute: recalcular chips para que la
+            # fila salte a "Sustituidas" al momento (si no, el contador se
+            # queda viejo y parece que la canción desaparece).
+            self._schedule_filter_refresh()
+            self._schedule_folder_refresh(rebuild=False)
+            self.status.set(f"✓ Sustituida: {new_path.name}")
             try:
                 self._refresh_downloads_tab()
             except Exception:
