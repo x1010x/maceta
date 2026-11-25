@@ -3,6 +3,12 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.81 — 2026-11-25
+
+- Captura de reportes (de verdad esta vez): el problema era que el fichero
+  temporal empezaba por punto (oculto) y `screencapture` no escribe
+  ocultos. Ahora usa un nombre normal. «Capturar y marcar» funciona.
+
 ## 0.4.80 — 2026-11-25
 
 - **Arreglada la captura de pantalla de los reportes.** macOS no deja a
