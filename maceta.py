@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.84"
+VERSION = "0.4.85"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -453,6 +453,7 @@ USER_STATE_DEFAULTS = {
     "show_all_downloads":         False,  # incluir búsquedas sin descarga
     "font_sizes":                 {},     # {tabla: tamaño de letra}
     "compact_cols":               True,   # Formato+Bitrate+SR en una celda
+    "tree_row_factor":            1.5,    # espacio entre filas (×tamaño letra)
     "font_family":                "",     # "" = la del sistema
     "ui_font_size":               0,      # 0 = la del sistema
     # --- Umbrales que antes vivían cableados en el código ---
@@ -3936,6 +3937,10 @@ class MacetaApp(tk.Tk):
         self.smart_search_var = tk.BooleanVar(value=us["smart_search"])
         self.show_all_dl_var = tk.BooleanVar(value=us["show_all_downloads"])
         self.compact_cols_var = tk.BooleanVar(value=us["compact_cols"])
+        self._tree_row_factor = float(us.get("tree_row_factor") or 1.5)
+        self.tree_row_factor_var = tk.DoubleVar(value=self._tree_row_factor)
+        self.tree_row_factor_var.trace_add(
+            "write", lambda *_: self._apply_row_height())
         self._ui_font_orig = {}
         self.font_family_var = tk.StringVar(value=us.get("font_family") or "")
         self.ui_font_size_var = tk.IntVar(value=us.get("ui_font_size") or 0)
@@ -5291,6 +5296,29 @@ class MacetaApp(tk.Tk):
         except Exception:
             return 12
 
+    def _apply_row_height(self):
+        """Re-aplica el alto de fila (espacio entre canciones) a todas las
+        tablas según el factor elegido en Opciones."""
+        try:
+            factor = float(self.tree_row_factor_var.get())
+        except Exception:
+            return
+        factor = max(1.0, min(3.0, factor))
+        self._tree_row_factor = factor
+        from tkinter import font as tkfont
+        try:
+            dsz = abs(int(tkfont.nametofont("TkDefaultFont").cget(
+                "size"))) or 13
+        except Exception:
+            dsz = 13
+        try:
+            ttk.Style(self).configure("Treeview",
+                                      rowheight=int(dsz * factor) + 2)
+        except Exception:
+            pass
+        self._restore_font_sizes()   # re-aplica estilos por-tabla con letra propia
+        save_user_state({"tree_row_factor": factor})
+
     def _apply_font_size(self, tree, key, size):
         from tkinter import font as tkfont
         try:
@@ -5299,8 +5327,9 @@ class MacetaApp(tk.Tk):
             fam = "TkDefaultFont"
         style_name = f"F{key}.Treeview"
         st = ttk.Style(self)
+        factor = getattr(self, "_tree_row_factor", 1.5)
         st.configure(style_name, font=(fam, size),
-                     rowheight=int(size * 2.0) + 2)
+                     rowheight=int(size * factor) + 4)
         st.configure(f"{style_name}.Heading", font=(fam, max(8, size - 1)))
         try:
             tree.configure(style=style_name)
@@ -6373,10 +6402,18 @@ class MacetaApp(tk.Tk):
         # Tree principal
         style = ttk.Style(self)
         try:
+            from tkinter import font as _tkfont
+            try:
+                _dsz = abs(int(_tkfont.nametofont("TkDefaultFont").cget(
+                    "size"))) or 13
+            except Exception:
+                _dsz = 13
+            factor = getattr(self, "_tree_row_factor", 1.5)
             style.configure("Treeview",
                             background=c["tree_bg"],
                             foreground=c["tree_fg"],
-                            fieldbackground=c["tree_bg"])
+                            fieldbackground=c["tree_bg"],
+                            rowheight=int(_dsz * factor) + 2)
             style.map("Treeview",
                       background=[("selected", c["tree_selected_bg"])],
                       foreground=[("selected", c["tree_selected_fg"])])
@@ -10536,6 +10573,12 @@ OPTION_TABS = [
       "label": "Reabrir la última carpeta al arrancar",
       "hint": "Vuelve a escanear donde lo dejaste. Apágalo si prefieres "
               "empezar siempre con la lista vacía."},
+     {"src": "app", "key": "tree_row_factor_var", "kind": "float",
+      "min": 1.1, "max": 2.6, "step": 0.1,
+      "label": "Espacio entre filas",
+      "hint": "Alto de cada fila en las tablas. Menos (p. ej. 1.3) = filas "
+              "más juntas y caben más canciones; más (2.0) = más aireado. "
+              "Se aplica al momento."},
      {"src": "app", "key": "use_index_var", "kind": "bool",
       "label": "Recordar análisis ya hechos",
       "hint": "Guarda BPM y corte de cada fichero en ~/.maceta_index.json "

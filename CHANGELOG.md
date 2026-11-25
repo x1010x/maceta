@@ -3,6 +3,13 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.85 — 2026-11-25
+
+- **Filas más compactas y ajustables (pedido por un usuario).** Las tablas
+  ya no dejan tanto espacio entre canciones, y además hay un ajuste nuevo:
+  *Preferencias → Opciones → General → «Espacio entre filas»* (1.1 muy
+  juntas … 2.6 muy aireadas). Se aplica al momento y se recuerda.
+
 ## 0.4.84 — 2026-11-25
 
 - **Arreglado (reportado por un usuario):** en «Renombrar / tags» se
