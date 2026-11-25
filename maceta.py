@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.76"
+VERSION = "0.4.77"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -93,6 +93,7 @@ MACETA_ROOT = Path(__file__).resolve().parent
 # Reportes del usuario (notas que deja desde Ayuda → Reportar un problema).
 # Texto plano, para leerlo por SSH. Vive junto a maceta.py.
 REPORTS_PATH = MACETA_ROOT / "reportes.txt"
+SHOT_TMP = Path.home() / ".maceta-shot.png"
 DOWNLOADS_DIR = MACETA_ROOT / "downloads"
 ARCHIVE_DIR = MACETA_ROOT / "archivo"
 LOSSLESS_EXTS = {"flac", "wav"}
@@ -3136,6 +3137,132 @@ def group_duplicates(items: list, hash_fn, fp_match_fn=None) -> list:
     return [g for g in comps.values() if len(g) >= 2]
 
 
+class ImageAnnotator(tk.Toplevel):
+    """Editor mínimo para marcar una captura con un pincel (señalar el
+    problema). Pinta trazos a mano alzada sobre la imagen y la guarda."""
+
+    COLORS = [("🔴", "#e23b2e"), ("🟡", "#f2c200"),
+              ("🟢", "#2ecc55"), ("🔵", "#2e7be2")]
+
+    def __init__(self, app, image_path, out_path, on_save):
+        super().__init__(app)
+        self.app = app
+        self.out_path = str(out_path)
+        self.on_save = on_save
+        self.title("Marca el problema con el pincel")
+        self.transient(app)
+        from PIL import Image, ImageDraw, ImageTk
+        self._Image, self._ImageDraw, self._ImageTk = Image, ImageDraw, ImageTk
+
+        img = Image.open(image_path).convert("RGB")
+        maxw, maxh = 1200, 760
+        scale = min(1.0, maxw / img.width, maxh / img.height)
+        if scale < 1.0:
+            img = img.resize((max(1, int(img.width * scale)),
+                              max(1, int(img.height * scale))))
+        self._orig = img
+        self.img = img.copy()
+        self.strokes = []
+        self._cur = []
+        self.color = self.COLORS[0][1]
+        self.width = 6
+
+        bar = ttk.Frame(self, padding=(8, 6))
+        bar.pack(fill=tk.X)
+        ttk.Label(bar, text="Pincel:").pack(side=tk.LEFT)
+        for emoji, col in self.COLORS:
+            ttk.Button(bar, text=emoji, width=3,
+                       command=lambda c=col: self._set_color(c)).pack(
+                side=tk.LEFT)
+        ttk.Label(bar, text="  Grosor:").pack(side=tk.LEFT)
+        for lbl, w in [("fino", 3), ("medio", 6), ("grueso", 12)]:
+            ttk.Button(bar, text=lbl,
+                       command=lambda ww=w: setattr(self, "width", ww)).pack(
+                side=tk.LEFT)
+        ttk.Button(bar, text="↶ Deshacer",
+                   command=self._undo).pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Button(bar, text="🧹 Limpiar",
+                   command=self._clear).pack(side=tk.LEFT)
+        self.color_lbl = tk.Label(bar, text="  ●", fg=self.color,
+                                  font=("TkDefaultFont", 16))
+        self.color_lbl.pack(side=tk.LEFT)
+
+        self.canvas = tk.Canvas(self, width=self.img.width,
+                                height=self.img.height,
+                                highlightthickness=0, cursor="pencil")
+        self.canvas.pack(padx=8, pady=4)
+        self.tkimg = self._ImageTk.PhotoImage(self.img)
+        self._imgid = self.canvas.create_image(0, 0, anchor="nw",
+                                                image=self.tkimg)
+        self.canvas.bind("<Button-1>", self._down)
+        self.canvas.bind("<B1-Motion>", self._move)
+        self.canvas.bind("<ButtonRelease-1>", self._up)
+
+        btns = ttk.Frame(self, padding=(8, 4, 8, 10))
+        btns.pack(fill=tk.X)
+        ttk.Label(btns, foreground="#888",
+                  text="Dibuja encima para señalar lo que falla.").pack(
+            side=tk.LEFT)
+        ttk.Button(btns, text="✓ Guardar y adjuntar",
+                   command=self._do_save).pack(side=tk.RIGHT)
+        ttk.Button(btns, text="Cancelar",
+                   command=self.destroy).pack(side=tk.RIGHT, padx=6)
+
+    def _set_color(self, c):
+        self.color = c
+        self.color_lbl.configure(fg=c)
+
+    def _down(self, e):
+        self._cur = [(e.x, e.y)]
+
+    def _move(self, e):
+        if not self._cur:
+            return
+        x0, y0 = self._cur[-1]
+        self.canvas.create_line(x0, y0, e.x, e.y, fill=self.color,
+                                width=self.width, capstyle="round",
+                                smooth=True, tags="temp")
+        self._cur.append((e.x, e.y))
+
+    def _up(self, _e):
+        if len(self._cur) >= 2:
+            self.strokes.append((self.color, self.width, list(self._cur)))
+            self._render()
+        self._cur = []
+
+    def _render(self):
+        self.img = self._orig.copy()
+        d = self._ImageDraw.Draw(self.img)
+        for color, width, pts in self.strokes:
+            if len(pts) >= 2:
+                d.line(pts, fill=color, width=width, joint="curve")
+                r = max(1, width // 2)
+                for x, y in pts:
+                    d.ellipse([x - r, y - r, x + r, y + r], fill=color)
+        self.tkimg = self._ImageTk.PhotoImage(self.img)
+        self.canvas.itemconfig(self._imgid, image=self.tkimg)
+        self.canvas.delete("temp")
+
+    def _undo(self):
+        if self.strokes:
+            self.strokes.pop()
+            self._render()
+
+    def _clear(self):
+        self.strokes = []
+        self._render()
+
+    def _do_save(self):
+        try:
+            self.img.save(self.out_path)
+        except Exception as e:
+            messagebox.showerror("Maceta", f"No se pudo guardar: {e}")
+            return
+        if self.on_save:
+            self.on_save(self.out_path)
+        self.destroy()
+
+
 class ReportDialog(tk.Toplevel):
     """Formulario para que el usuario cuente un problema. Lo guarda en
     reportes.txt (texto plano, junto a maceta.py) con versión, parte de la
@@ -3191,10 +3318,12 @@ class ReportDialog(tk.Toplevel):
             ).pack(anchor="w")
         att = ttk.Frame(frm)
         att.pack(anchor="w", fill=tk.X, pady=(4, 0))
+        ttk.Button(att, text="📸 Capturar y marcar…",
+                   command=self._capture_and_annotate).pack(side=tk.LEFT)
         ttk.Button(att, text="📎 Adjuntar imagen…",
-                   command=self._attach_image).pack(side=tk.LEFT)
+                   command=self._attach_image).pack(side=tk.LEFT, padx=6)
         self._attached = None
-        self.att_lbl = ttk.Label(att, text="(o haz Cmd+Shift+4 y adjúntala)",
+        self.att_lbl = ttk.Label(att, text="(sin imagen)",
                                  foreground="#888")
         self.att_lbl.pack(side=tk.LEFT, padx=8)
 
@@ -3271,16 +3400,13 @@ class ReportDialog(tk.Toplevel):
             self.att_lbl.configure(text=f"adjunta: {Path(p).name}",
                                    foreground="#0a7f2e")
 
-    def _screenshot(self) -> str:
-        """Captura la pantalla (sin este diálogo delante) y la guarda junto
-        a reportes.txt. Devuelve el nombre del PNG o '' si no se pudo.
-        En macOS usa `screencapture`; en otros SO lo intenta con Tk."""
-        ts = time.strftime("%Y%m%d-%H%M%S")
-        png = MACETA_ROOT / f"reporte-{ts}.png"
+    def _grab_screen(self, png) -> bool:
+        """Captura la pantalla (quitando este diálogo de la foto) en `png`.
+        macOS: screencapture · Windows: powershell · Linux: import."""
+        png = Path(png)
         try:
-            self.withdraw()                 # quitar el diálogo de la foto
+            self.withdraw()
             self.app.update_idletasks()
-            self.app.after(0, lambda: None)
             time.sleep(0.4)
             if sys.platform == "darwin":
                 subprocess.run(["screencapture", "-x", str(png)],
@@ -3306,7 +3432,29 @@ class ReportDialog(tk.Toplevel):
                 self.deiconify()
             except Exception:
                 pass
-        return png.name if png.exists() else ""
+        return png.exists()
+
+    def _screenshot(self) -> str:
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        png = MACETA_ROOT / f"reporte-{ts}.png"
+        return png.name if self._grab_screen(png) else ""
+
+    def _capture_and_annotate(self):
+        if not self._grab_screen(SHOT_TMP):
+            messagebox.showwarning(
+                "Maceta",
+                "No se pudo capturar la pantalla.\n\nSi es la primera vez, "
+                "concede permiso de «Grabación de pantalla» en Ajustes del "
+                "Sistema → Privacidad y seguridad, y reinténtalo. También "
+                "puedes hacer la captura con Cmd+Shift+4 y usar «Adjuntar "
+                "imagen…».")
+            return
+
+        def done(saved):
+            self._attached = saved
+            self.att_lbl.configure(text="✓ imagen marcada adjunta",
+                                   foreground="#0a7f2e")
+        ImageAnnotator(self.app, str(SHOT_TMP), str(SHOT_TMP), done)
 
     def _show_saved(self):
         if not REPORTS_PATH.exists():
@@ -9300,6 +9448,12 @@ MACETA_MANUAL = [
         "qué ha pasado y qué esperabas, y guarda. Se queda en tu ordenador "
         "(fichero reportes.txt junto a Maceta) con la versión y el log, y "
         "así podemos mirarlo y arreglarlo. No se envía nada por internet.",
+        "",
+        "Puedes adjuntar una captura: el botón «📸 Capturar y marcar…» saca "
+        "la foto de la pantalla y abre un editor para dibujar encima con un "
+        "pincel y señalar el problema. La primera vez macOS pedirá permiso "
+        "de «Grabación de pantalla». También puedes adjuntar una imagen que "
+        "ya tengas hecha.",
     ]),
     ("🧹 Limpiar duplicados", [
         "Menú → Biblioteca → «Limpiar duplicados…». Busca canciones "

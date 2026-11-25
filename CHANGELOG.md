@@ -3,6 +3,14 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.77 — 2026-11-25
+
+- **Marcar la captura con un pincel.** En «Reportar un problema», botón
+  «📸 Capturar y marcar…»: Maceta saca la captura de la pantalla y abre un
+  editor donde puedes **dibujar encima con un pincel** (rojo/amarillo/verde/
+  azul, grosor fino/medio/grueso, deshacer, limpiar) para señalar
+  exactamente qué falla. La imagen marcada se adjunta al reporte.
+
 ## 0.4.76 — 2026-11-25
 
 - **Los reportes pueden llevar captura de pantalla.** En «Reportar un
