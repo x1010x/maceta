@@ -3,14 +3,28 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
-## 0.4.73
+## 0.4.75 — 2026-11-25
+
+- **El changelog (Ayuda → «Ver changelog…») muestra todas las versiones con
+  su fecha**, para que puedas leer el historial de lo que se ha ido
+  arreglando y añadiendo. Cada versión lleva ahora la fecha en que salió.
+
+## 0.4.74 — 2026-11-25
+
+- **Reportar un problema** (Menú → Ayuda → «🐞 Reportar un problema…»). Un
+  formulario sencillo: eliges en qué parte del programa pasó, escribes qué
+  ha pasado y qué esperabas, y se guarda en tu ordenador (`reportes.txt`,
+  junto a Maceta) con la versión y el log técnico. No se envía nada por
+  internet. Sirve para dejar notas que luego revisamos y arreglamos.
+
+## 0.4.73 — 2026-11-25
 
 - **Arreglo: slskd no arrancaba («Invalid configuration»).** Al «borrar
   todo» las descargas se eliminaba también la carpeta `.incomplete` que
   slskd necesita, y entonces slskd se negaba a arrancar. Ahora esa carpeta
   nunca se borra, y Maceta la recrea siempre antes de lanzar slskd.
 
-## 0.4.72
+## 0.4.72 — 2026-11-24
 
 - **Limpiar duplicados** (Menú → Biblioteca → «🧹 Limpiar duplicados…»).
   Busca en la biblioteca cargada las canciones repetidas: idénticas (mismo
@@ -20,7 +34,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   las sobrantes seleccionadas para **enviar a la papelera** (nunca borra: va
   a la papelera y es recuperable). Te dice cuántos MB recuperas.
 
-## 0.4.71
+## 0.4.71 — 2026-11-24
 
 - **El chip «⚠ Revisar» ahora es global** y junta TODO lo que está por
   revisar: ya no depende de la carpeta que tengas activa (muestra las de
@@ -29,7 +43,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   veredicto). Así tienes un único sitio con todo lo que hay que mirar. El
   resto de chips siguen acotados a la carpeta activa.
 
-## 0.4.70
+## 0.4.70 — 2026-11-24
 
 - **La Wishlist verifica la calidad al bajar.** Como esos temas no tienen
   original que comparar, al descargarse Maceta los analiza solo: si están a
@@ -38,19 +52,19 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   mires. El contador muestra «N buenas · M a revisar». «Limpiar» quita las
   buenas y deja las de revisar.
 
-## 0.4.69
+## 0.4.69 — 2026-11-24
 
 - En la Wishlist, el botón de buscar ahora pone **«🔎 Buscar todos»** (con
   texto, más claro): lanza la búsqueda y descarga de todos los temas que
   aún no tienes bajados.
 
-## 0.4.68
+## 0.4.68 — 2026-11-24
 
 - En *Importar de Spotify*, botón nuevo **«➕ Añadir los que faltan»**: mete
   de golpe todos los temas que NO tienes ya en la biblioteca, sin tener que
   seleccionarlos a mano. Sigue estando «Añadir seleccionados» para elegir.
 
-## 0.4.67
+## 0.4.67 — 2026-11-24
 
 - **Nueva pestaña «🎧 Wishlist».** Los temas que importas de Spotify ahora
   van a una lista propia que se guarda entre sesiones, con su estado:
@@ -59,7 +73,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   quitar temas o limpiar los ya descargados. Al importar de Spotify, Maceta
   te lleva directo a esta pestaña.
 
-## 0.4.66
+## 0.4.66 — 2026-11-24
 
 - **Importar de Spotify ahora avisa de lo que ya tienes.** Al traer los
   temas de una playlist, Maceta comprueba cuáles ya están en tu biblioteca:
@@ -68,7 +82,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   Tú eliges qué añadir con «➕ Añadir seleccionados» — por defecto solo baja
   lo que no tienes.
 
-## 0.4.65
+## 0.4.65 — 2026-11-24
 
 - **Importar playlists de Spotify.** Nuevo botón 🎧 en *Actividad Soulseek*
   (junto a la caja de búsqueda): pega el enlace de una playlist, álbum o
@@ -78,7 +92,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   público embebido). Playlists muy grandes pueden venir recortadas; verás
   cuántos temas se encontraron.
 
-## 0.4.64
+## 0.4.64 — 2026-11-24
 
 - **Las sustituciones automáticas ya aparecen en «Sustituidas» al
   instante.** Antes, cuando Maceta sustituía sola una canción (tras
@@ -87,7 +101,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   «Sustituidas» hasta re-escanear. Ahora refresca igual que la sustitución
   manual. (Las que sustituías a mano siempre funcionaron.)
 
-## 0.4.63
+## 0.4.63 — 2026-11-24
 
 - **Arreglo de la escalada:** cuando una descarga resulta ser *otra*
   canción («no coincide»), vuelve a ir al bucket **Revisar** (para mirarla
@@ -96,7 +110,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   es lo pedido. (En 0.4.62 el «no coincide» también escalaba y por eso
   Revisar se quedaba a 0 y las canciones daban vueltas en «En proceso».)
 
-## 0.4.62
+## 0.4.62 — 2026-11-24
 
 - **Escalada automática ante FAKE.** Si bajas una versión y al analizarla
   sigue siendo FAKE (o de calidad por debajo del mínimo), Maceta baja sola
@@ -106,12 +120,12 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   nombre y tamaño). Se puede apagar: *Opciones → «Si FAKE, probar
   siguiente versión»* (viene activado).
 
-## 0.4.61
+## 0.4.61 — 2026-11-24
 
 - El contador de la cola vuelve a mostrar el total: *«📤 312 por buscar
   (de 350)»*, además del botón «📤 Cola…» para verla y cancelar.
 
-## 0.4.60
+## 0.4.60 — 2026-11-24
 
 - **Cola de búsqueda visible y cancelable.** Cuando mandas muchas
   canciones a buscar, ahora puedes verlas: botón **«📤 Cola…»** en el
@@ -120,7 +134,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   cola** entera. No cancela la que está buscando en ese instante, y no
   borra ni toca ningún fichero — solo deja de buscarlas.
 
-## 0.4.59
+## 0.4.59 — 2026-11-24
 
 - **Contador «por buscar»** en el resumen de Actividad Soulseek. Cuando
   mandas muchas canciones a buscar desde Biblioteca (p. ej. todos los
@@ -128,7 +142,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   ahora ves cuántas quedan: *«📤 38 por buscar (de 50)»*. Baja en vivo y
   desaparece al terminar.
 
-## 0.4.58
+## 0.4.58 — 2026-11-24
 
 - **Arreglado: canciones que volvían a «sin analizar» al reabrir.** El
   índice validaba la fecha del fichero de forma estricta, así que dos
@@ -144,7 +158,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   «🔗 Búsquedas relacionadas» salta a su búsqueda y resalta las parientes.
   (Se quitó el buscador de texto anterior.)
 
-## 0.4.57
+## 0.4.57 — 2026-11-24
 
 - **Filtro de búsquedas** en Actividad Soulseek: una caja 🔎 encima del
   panel de Búsquedas para encontrar una búsqueda entre muchas escribiendo
@@ -153,7 +167,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   descarga): filtra las búsquedas por la palabra distintiva (el artista),
   para ver de un vistazo todas las relacionadas.
 
-## 0.4.56
+## 0.4.56 — 2026-11-24
 
 - **Botón «✅ Dar por buenas» las sustituidas → Listas.** Las canciones
   sustituidas ya pasaron la verificación de audio al reemplazarlas, así
@@ -163,7 +177,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   queda entre reinicios** (antes volvían a aparecer como pendientes al
   reabrir, porque el fichero sustituido es nuevo y estaba sin analizar).
 
-## 0.4.55
+## 0.4.55 — 2026-11-24
 
 - **Diagnóstico de Soulseek** (menú Soulseek → 🩺 Diagnóstico de
   Soulseek…). Revisa de una vez todo lo que suele fallar y lo arregla:
@@ -176,7 +190,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   versión anterior), así que la identificación precisa de canciones
   funciona de serie.
 
-## 0.4.54
+## 0.4.54 — 2026-11-24
 
 - **Verificación de canciones con huella acústica (Chromaprint).** Para
   decidir si una descarga es la misma canción que tu original, Maceta
@@ -189,7 +203,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   Si `fpcalc` no está instalado, cae a la comparación de antes, así que
   nada se rompe.
 
-## 0.4.53
+## 0.4.53 — 2026-11-24
 
 - **Manual de Maceta integrado** (Ayuda → 📖 Manual de Maceta…). Una
   ventana con 19 secciones que explican todo: cada pestaña, el explorador
@@ -197,7 +211,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   por entrada, los menús de clic derecho, la carpeta archivo/, las
   estadísticas, las opciones y los atajos de teclado.
 
-## 0.4.52
+## 0.4.52 — 2026-11-24
 
 - **Maceta ya no borra nada de forma permanente — nunca.** Todo lo que
   antes se eliminaba de verdad (descargas que borras a mano, "Borrar
@@ -207,7 +221,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   papelera propia dentro de la carpeta de Maceta: en ningún caso se
   pierde. Los diálogos lo dicen: "van a la papelera, recuperables".
 
-## 0.4.51
+## 0.4.51 — 2026-11-24
 
 - **Botón "🧹 Limpiar archivo…"** en Preferencias → Opciones → Descargas.
   Devuelve a la biblioteca los originales que Maceta archivó al sustituir
@@ -215,7 +229,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   ya duplicados. Deja en `archivo/` las copias repetidas y las de baja
   calidad. Dice cuántas restaura y cuántas se quedan, y no borra nada.
 
-## 0.4.50
+## 0.4.50 — 2026-11-23
 
 - **Reproductor con barra para moverte por la canción.** Antes dependía
   de `ffplay` (que no siempre viene con ffmpeg) y no dejaba avanzar ni
@@ -235,7 +249,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   vinilos y MiniDiscs ocuparía tu colección, la altura de la torre de
   CDs, lo que pesaría, y cuántos CDs llenaría cada categoría.
 
-## 0.4.49
+## 0.4.49 — 2026-11-22
 
 - **Las sustituidas se recuerdan entre reinicios.** El estado «✓
   sustituido» solo vivía en memoria, así que al cerrar Maceta las
@@ -244,7 +258,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   reinicies cuando reinicies, siguen en el chip «Sustituidas» hasta que
   las reanalices tú.
 
-## 0.4.48
+## 0.4.48 — 2026-11-22
 
 - **Arreglado: las canciones sustituidas no salían en el chip
   «Sustituidas».** La columna Calidad las marcaba bien («⬇ Sustituida»),
@@ -256,7 +270,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   Lo mismo valía para «en proceso» (convirtiendo, en cola). El contador
   se actualiza solo al sustituir, sin tener que tocar nada.
 
-## 0.4.47
+## 0.4.47 — 2026-11-22
 
 - **Cuando slskd no arranca, ahora te dice por qué.** Maceta lanzaba
   slskd mandando su salida a `/dev/null`, así que el error real se
@@ -272,7 +286,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   http://localhost:5030. ¿Has arrancado slskd?"* o *"slskd responde pero
   rechaza la API key"*.
 
-## 0.4.46
+## 0.4.46 — 2026-11-22
 
 - **Barras de botones solo con iconos**, estilo macOS: al pasar el ratón
   por encima sale un globo diciendo qué hace cada uno. 45 botones
@@ -289,7 +303,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   (por conda o Homebrew). Funciona incluso con `curl … | bash`, leyendo
   la respuesta del terminal.
 
-## 0.4.45
+## 0.4.45 — 2026-11-21
 
 - **Arreglado: elegir carpeta mientras otra se está escaneando duplicaba
   filas.** Cada escaneo lleva número; si empiezas otro, el anterior
@@ -300,7 +314,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   analizar: así el arranque siguiente ya es instantáneo aunque no hayas
   analizado nada.
 
-## 0.4.44
+## 0.4.44 — 2026-11-21
 
 - **Arrancar ya no cuesta un minuto.** La carpeta siempre se guardaba y
   se volvía a abrir sola, pero releer los tags de 11.000 canciones son
@@ -314,7 +328,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 - Si mueves una canción de carpeta, se la sigue reconociendo por su
   huella; el mapa de rutas solo es un atajo para lo que no se ha movido.
 
-## 0.4.43
+## 0.4.43 — 2026-11-21
 
 - **Arreglado "Encontrar en Biblioteca"**: saltaba a la pestaña pero la
   canción se quedaba sin marcar. Dos causas: el árbol de carpetas seguía
@@ -328,7 +342,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   dónde salió (porque guardó el enlace al descargarla), te ofrece abrir
   esa carpeta y la busca sola al terminar de cargarla.
 
-## 0.4.42
+## 0.4.42 — 2026-11-21
 
 - **"🔍 Encontrar en Biblioteca"** por botón derecho en Actividad
   Soulseek — sobre una búsqueda, un resultado o una descarga — y también
@@ -341,7 +355,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   menús, botones y tablas. «(la del sistema)» devuelve la de macOS, y
   cada tabla conserva además su A− / A+.
 
-## 0.4.41
+## 0.4.41 — 2026-11-21
 
 - **IMPORTANTE: los botones actúan sobre la carpeta que tengas abierta.**
   Si seleccionas "Darkwave" en el explorador, *Analizar* y *Buscar fakes*
@@ -366,7 +380,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   44.1 kHz). Se activa y desactiva con la casilla *Compacto*. Libera
   unos 145 px de ancho para el nombre del fichero.
 
-## 0.4.40
+## 0.4.40 — 2026-11-21
 
 - **Fuera la barra de arriba**: el botón de seleccionar carpeta y la
   ruta se han movido al panel izquierdo, encima del explorador. La
@@ -376,7 +390,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   Actividad, pestaña Descargas y Estadísticas. Cada una recuerda el
   suyo, y el alto de fila se ajusta solo.
 
-## 0.4.39
+## 0.4.39 — 2026-11-21
 
 - **Explorador de carpetas en Biblioteca.** Apuntas a la raíz de tu
   música y a la izquierda sale el árbol de subcarpetas con sus números:
@@ -396,14 +410,14 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   analizar. Se calcula **en segundo plano** sobre toda la biblioteca o
   solo sobre la carpeta seleccionada; puedes seguir trabajando mientras.
 
-## 0.4.38
+## 0.4.38 — 2026-11-21
 
 - **Las búsquedas ya descargadas se ven en verde.** La tabla de
   Búsquedas queda así de un vistazo: verde = ya bajada, rojo = nadie
   respondió, ámbar = respondieron pero no pasan tus filtros. El verde
   aguanta aunque limpies la lista de descargas de slskd.
 
-## 0.4.37
+## 0.4.37 — 2026-11-21
 
 - **Usuarios que cancelan, fuera.** Si un peer nos tumba 3 descargas en
   una hora (configurable), deja de usarse al elegir resultados. La lista
@@ -440,8 +454,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 - Si slskd responde `409` porque ya hay una búsqueda igual en marcha,
   Maceta se engancha a esa en vez de fallar con un error críptico.
 
-## 0.4.36
-
+## 0.4.36 — 2026-11-21
 - **ARREGLADO: la pestaña Actividad se quedaba con un solo panel.** Al
   guardar la posición de los divisores, un panel de una pestaña que
   todavía no se había mostrado reportaba una posición absurda, y al
@@ -452,7 +465,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 - **"Seleccionar carpeta…" abre donde estuviste**: en la carpeta en uso,
   o en la última reciente que siga existiendo.
 
-## 0.4.35
+## 0.4.35 — 2026-11-21
 
 - **Índice de análisis: no se escanea dos veces lo mismo.** Maceta guarda
   el BPM y el corte espectral de cada fichero en `~/.maceta_index.json`.
@@ -475,7 +488,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   cuáles no cumplen.
 - Dos opciones nuevas: *Recordar análisis ya hechos* y *Vaciar índice*.
 
-## 0.4.34
+## 0.4.34 — 2026-11-21
 
 - **ARREGLADO: las búsquedas que no llegaban a 250 respuestas no bajaban
   nada.** slskd no sirve ni una respuesta mientras la búsqueda está
@@ -499,7 +512,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   falta, crea el entorno, clona el repo y deja un `Maceta.app` en
   Aplicaciones con el logo de icono.
 
-## 0.4.33
+## 0.4.33 — 2026-11-21
 
 - **Logo propio**: Maceta ya tiene icono de ventana. Si `logo.png` está
   junto a `maceta.py`, se usa automáticamente; si no está, Tk se queda
@@ -507,8 +520,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 - Proyecto preparado para publicarse: licencia GPL-3.0, README nuevo y
   suite de tests al día (91, todos en verde).
 
-## 0.4.32
-
+## 0.4.32 — 2026-11-21
 - **Arreglada la elección automática**: se bajaba el fichero más grande
   aunque se llamara distinto. Buscando "BLACK PUMAS - Colors" elegía
   "0114 - Colors Live from Brooklyn Paramount.flac" (52 MB, un directo)
@@ -533,8 +545,7 @@ actualizar con un popup mostrando lo que cambió desde tu versión anterior.
   fundido en ese panel**: los menús de siempre ahora lo abren en la
   pestaña que toca.
 
-## 0.4.31
-
+## 0.4.31 — 2026-11-21
 Peticiones recogidas de las pruebas en equipos reales:
 
 - **Descargas → 🗑 Borrar TODO**: vacía `downloads/` de golpe, parciales
@@ -578,8 +589,7 @@ Peticiones recogidas de las pruebas en equipos reales:
   porcentaje. Si la ventana es estrecha los chips se reparten solos en
   dos filas en vez de salirse por la derecha.
 
-## 0.4.20
-
+## 0.4.20 — 2026-11-21
 - **Auto-selección más lista**: `choose_best` prioriza AHORA como
   regla dura los peers **con slot libre o cola=0**. Sólo si ninguno de
   los aceptables está disponible cae a los que tienen cola. Dentro de
@@ -587,8 +597,7 @@ Peticiones recogidas de las pruebas en equipos reales:
   Antes: un FLAC gigante con cola de 40 ganaba a un MP3 320 listo para
   empezar. Ahora empezamos ya.
 
-## 0.4.19
-
+## 0.4.19 — 2026-11-21
 - Nueva columna **Cola** en Descargas de Actividad Soulseek. Muestra
   el `placeInQueue` que reporta slskd — así ves si tu descarga es la
   siguiente o hay 12 delante.
@@ -599,8 +608,7 @@ Peticiones recogidas de las pruebas en equipos reales:
   hay algún salto raro entre búsquedas veremos exactamente qué guard
   se disparó en `~/.maceta.log`.
 
-## 0.4.18
-
+## 0.4.18 — 2026-11-21
 - **Fix crítico: bucle infinito en Actividad Soulseek**. Los logs
   reales mostraban **7500+ llamadas a `_fetch_results_worker` sobre el
   mismo sid en un segundo**, saturando Python y bloqueando la UI.
@@ -619,8 +627,7 @@ Peticiones recogidas de las pruebas en equipos reales:
   el nombre y la query. Sirve para que, aunque después vacíes la
   Biblioteca o cierres Maceta, siga siendo posible sustituir.
 
-## 0.4.17
-
+## 0.4.17 — 2026-11-21
 - **Actividad Soulseek: acciones que ya no cuelgan Tk**. Todas las
   operaciones que hacen HTTP a slskd (cancelar búsqueda/descarga,
   limpiar completadas, limpiar todo, encolar descargas del panel
@@ -632,8 +639,7 @@ Peticiones recogidas de las pruebas en equipos reales:
   `NameError` cada vez que se cargaban resultados.
 - Todos los workers loggean start / done / duración (`~/.maceta.log`).
 
-## 0.4.16
-
+## 0.4.16 — 2026-11-21
 - **Las columnas ya no se autoencogen** al arrastrar una para
   agrandarla. Se aplica `stretch=False` + `minwidth` (mitad del ancho
   inicial) a todas las columnas de las 4 tablas: Biblioteca,
@@ -641,16 +647,14 @@ Peticiones recogidas de las pruebas en equipos reales:
   ahora dispara el scroll horizontal si excede el ancho visible en vez
   de robar espacio a las demás.
 
-## 0.4.15
-
+## 0.4.15 — 2026-11-21
 - Panel Resultados: nuevo orden de columnas
   `# · Fichero · Cola · Slot · MB · Ext · kbps · Usuario · Carpeta · Vel`.
   El `#` es el mismo `#N` de la búsqueda de la que provienen los
   resultados — así ves de un vistazo a qué búsqueda pertenece cada
   resultado.
 
-## 0.4.14
-
+## 0.4.14 — 2026-11-21
 - **Cambiar de pestañas ya no bloquea la UI**:
   - Al entrar en **Descargas**, el escaneo del disco + lectura de
     metadata pasa a un hilo. Los ficheros se insertan en el tree en
@@ -671,8 +675,7 @@ Peticiones recogidas de las pruebas en equipos reales:
   para que las tres decisiones clave (cuánto queue, si hay slot libre,
   tamaño) estén a la izquierda antes del nombre.
 
-## 0.4.13
-
+## 0.4.13 — 2026-11-21
 - **Nuevos logs**: Maceta escribe a `~/.maceta.log` (rota a 2 MB × 3
   ficheros). Nivel INFO por defecto, ajustable con `MACETA_LOG=DEBUG`.
   Nuevo menú `Ayuda → 📋 Abrir log…`.
@@ -688,8 +691,7 @@ Peticiones recogidas de las pruebas en equipos reales:
 - Cada búsqueda, batch y fetch de resultados loggea inicio/fin y
   duración — sabemos exactamente en qué se atasca si algo va lento.
 
-## 0.4.12
-
+## 0.4.12 — 2026-11-21
 - **Actividad Soulseek ya no se cuelga**:
   - Al seleccionar una búsqueda, la lectura de resultados se hace en un
     hilo aparte. El Tk loop no se congela aunque slskd tarde 10 s en
@@ -701,8 +703,7 @@ Peticiones recogidas de las pruebas en equipos reales:
     cada 4 s.
   - Sincronización #N búsqueda ↔ descarga simplificada.
 
-## 0.4.11
-
+## 0.4.11 — 2026-11-21
 - Nuevo **🏷 Renombrar inteligente / editar tags** en el menú
   contextual de Biblioteca (click derecho sobre una fila).
   - Muestra los tags ID3/vorbis actuales (Título, Artista, Álbum,
@@ -719,8 +720,7 @@ Peticiones recogidas de las pruebas en equipos reales:
   para no saturar slskd ni el hilo Tk. El paralelismo de 0.4.10 se
   revierte.
 
-## 0.4.10
-
+## 0.4.10 — 2026-11-21
 - **Búsquedas más fiables**:
   - Timeout de espera sube de 25 s a **60 s** y aceptamos parciales:
     con ≥5 respuestas tras 15 s ya damos por buena la búsqueda.
@@ -747,15 +747,13 @@ Peticiones recogidas de las pruebas en equipos reales:
   el swatch → color picker → aplica y guarda al instante. Restaurar
   defaults con un botón.
 
-## 0.4.9
-
+## 0.4.9 — 2026-11-21
 - Al auto-arrancar SoulseekQt ya no salta a primer plano. En macOS se
   lanza con `open -g -j` (oculto), en Windows con `SW_SHOWMINNOACTIVE`
   (minimizado sin robar foco). Podrás activarlo desde su icono si lo
   necesitas, pero por defecto no molesta.
 
-## 0.4.8
-
+## 0.4.8 — 2026-11-21
 - **Comparador visual antes de sustituir**: al hacer "Sustituir" (desde
   Biblioteca o desde una descarga) ahora sale una ventana side-by-side
   con el original a la izquierda y la candidata a la derecha.
@@ -767,8 +765,7 @@ Peticiones recogidas de las pruebas en equipos reales:
 - Solo cuando pulsas `✓ Sustituir` se mueve el original a `archivo/` y
   se pone la nueva en su sitio. Cancelar deja todo intacto.
 
-## 0.4.7
-
+## 0.4.7 — 2026-11-21
 - **Opciones visibles en Biblioteca**: los 4 checkboxes de preferencias
   (`Preguntar calidad`, `Sustituir original`, `Autoconv FLAC→MP3 320`,
   `Forzar 320`) ahora se ven encima del miniplayer sin abrir el menú.
@@ -785,8 +782,7 @@ Peticiones recogidas de las pruebas en equipos reales:
   fichero más grande sube arriba. Los "320 kbps" mentirosos de 3 MB caen
   al final. Puedes reordenar clicando cualquier cabecera.
 
-## 0.4.6
-
+## 0.4.6 — 2026-11-21
 - **Actividad Soulseek reorganizada**: Búsquedas y Resultados ahora están
   **lado a lado** en la parte de arriba (arrastra el divisor para
   redimensionar). Descargas queda debajo, ocupando el ancho completo.
@@ -798,15 +794,13 @@ Peticiones recogidas de las pruebas en equipos reales:
 - Botones de Actividad con etiquetas más cortas (Cancelar / Rebuscar…
   / Limpiar / ↻) para caber cuando el pane está estrecho.
 
-## 0.4.5
-
+## 0.4.5 — 2026-11-21
 - Nuevo botón **🧹 Limpiar no completados** en la pestaña Descargas.
   Vacía `downloads/.incomplete/` (los trozos que deja slskd cuando una
   descarga falla o se cancela). Confirma antes con tamaño total y avisa
   si hay descargas activas.
 
-## 0.4.4
-
+## 0.4.4 — 2026-11-21
 - Nueva pestaña **Descargas**: lista independiente de todos los ficheros
   que hay en `downloads/`. Reproducir, sustituir, borrar, mostrar en
   Finder. Se refresca al abrir la pestaña.
@@ -820,8 +814,7 @@ Peticiones recogidas de las pruebas en equipos reales:
   te sale un resumen con lo que cambió desde tu versión anterior (esta
   ventana).
 
-## 0.4.3
-
+## 0.4.3 — 2026-11-21
 - **Descargas fuera de Biblioteca**: los ficheros que bajas ya no
   aparecen como filas en Biblioteca. Solo se ven en Actividad → Descargas
   mientras están en curso, y en el diálogo "Sustituir con descarga…".
@@ -831,8 +824,7 @@ Peticiones recogidas de las pruebas en equipos reales:
 - El objetivo de calidad y el filtro de resultados se ajustan según esa
   preferencia.
 
-## 0.4.2
-
+## 0.4.2 — 2026-11-21
 - **Política target 320**: MP3 declarado a menos de 320 kbps se marca
   automáticamente como FAKE. Antes se validaba contra su bitrate
   declarado, ahora contra el objetivo de 320.
@@ -843,16 +835,14 @@ Peticiones recogidas de las pruebas en equipos reales:
   que el fichero descargado cumple realmente el target. Si un peer
   anuncia 320 kbps pero es un fake, se rechaza (`✗ calidad baja`).
 
-## 0.4.1
-
+## 0.4.1 — 2026-11-21
 - **Chips de estado** en Biblioteca: `Todas · A revisar · En proceso ·
   Listas · Sin analizar`, con contadores en vivo y filtrado al click.
 - Columna **Calidad** enriquecida con emoji y contexto:
   `✅ 320 OK`, `🎵 LOSSLESS`, `❌ FAKE`, `⬇ Sustituida`, `⏳ En cola`,
   `🔎 Buscando`, `⚠ Revisar match`, `❓ sin analizar`.
 
-## 0.4.0
-
+## 0.4.0 — 2026-11-21
 - **Auto-actualización**: Maceta ahora puede bajarse a sí misma la
   última versión desde el repo. Menú `Ayuda → Configurar
   actualizaciones…` para pegar el token. Auto-comprueba al arrancar.

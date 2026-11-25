@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.73"
+VERSION = "0.4.75"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -90,6 +90,9 @@ log.info("=== Maceta %s arrancando (pid=%s) ===", VERSION, os.getpid())
 SUPPORTED_EXTS = {".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".wma"}
 CONFIG_PATH = Path.home() / ".maceta_config.json"
 MACETA_ROOT = Path(__file__).resolve().parent
+# Reportes del usuario (notas que deja desde Ayuda → Reportar un problema).
+# Texto plano, para leerlo por SSH. Vive junto a maceta.py.
+REPORTS_PATH = MACETA_ROOT / "reportes.txt"
 DOWNLOADS_DIR = MACETA_ROOT / "downloads"
 ARCHIVE_DIR = MACETA_ROOT / "archivo"
 LOSSLESS_EXTS = {"flac", "wav"}
@@ -3133,6 +3136,123 @@ def group_duplicates(items: list, hash_fn, fp_match_fn=None) -> list:
     return [g for g in comps.values() if len(g) >= 2]
 
 
+class ReportDialog(tk.Toplevel):
+    """Formulario para que el usuario cuente un problema. Lo guarda en
+    reportes.txt (texto plano, junto a maceta.py) con versión, parte de la
+    app, contexto y las últimas líneas del log, para que el desarrollador lo
+    lea luego por SSH."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Reportar un problema")
+        self.geometry("600x560")
+        self.transient(app)
+
+        ttk.Label(self, padding=(14, 12, 14, 2), justify="left",
+                  wraplength=560, foreground="#888",
+                  text="Cuéntanos qué ha pasado. Cuanto más detalle, más "
+                       "fácil es arreglarlo. Se guarda en tu ordenador; no "
+                       "se envía nada por internet.").pack(fill=tk.X)
+
+        frm = ttk.Frame(self, padding=(14, 6))
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frm, text="¿En qué parte del programa?").pack(anchor="w")
+        try:
+            tabs = [self.app.notebook.tab(i, "text")
+                    for i in range(self.app.notebook.index("end"))]
+        except Exception:
+            tabs = []
+        tabs = tabs + ["Otra parte"]
+        try:
+            actual = self.app.notebook.tab(self.app.notebook.select(), "text")
+        except Exception:
+            actual = tabs[0] if tabs else ""
+        self.parte = tk.StringVar(value=actual if actual in tabs else tabs[0])
+        ttk.Combobox(frm, textvariable=self.parte, values=tabs,
+                     state="readonly").pack(fill=tk.X, pady=(2, 10))
+
+        ttk.Label(frm, text="¿Qué ha pasado? ¿Qué esperabas que pasara?"
+                  ).pack(anchor="w")
+        self.txt = tk.Text(frm, height=10, wrap="word")
+        self.txt.pack(fill=tk.BOTH, expand=True, pady=(2, 8))
+        self.txt.focus_set()
+
+        self.incluir = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            frm, variable=self.incluir,
+            text="Incluir datos técnicos (versión y log) — recomendado"
+            ).pack(anchor="w")
+
+        btns = ttk.Frame(self, padding=(14, 4, 14, 12))
+        btns.pack(fill=tk.X)
+        ttk.Button(btns, text="📨 Guardar reporte",
+                   command=self._save).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Ver reportes guardados",
+                   command=self._show_saved).pack(side=tk.LEFT, padx=8)
+        ttk.Button(btns, text="Cerrar",
+                   command=self.destroy).pack(side=tk.RIGHT)
+
+    def _save(self):
+        desc = self.txt.get("1.0", tk.END).strip()
+        if not desc:
+            messagebox.showinfo("Maceta", "Escribe qué ha pasado primero.")
+            return
+        sep = "=" * 60
+        lines = [sep,
+                 f"[{time.strftime('%Y-%m-%d %H:%M:%S')}]  Maceta {VERSION}",
+                 f"Parte: {self.parte.get()}",
+                 "-" * 60, desc, "-" * 60]
+        if self.incluir.get():
+            try:
+                tab = self.app.notebook.tab(
+                    self.app.notebook.select(), "text")
+            except Exception:
+                tab = "?"
+            lines.append(f"Contexto: {sys.platform} · pestaña activa: {tab} "
+                         f"· {len(self.app.rows_by_iid)} filas cargadas")
+            try:
+                log_tail = LOG_PATH.read_text(
+                    encoding="utf-8", errors="replace").splitlines()[-40:]
+                lines.append("--- log (últimas 40 líneas) ---")
+                lines.extend(log_tail)
+            except Exception:
+                lines.append("(no se pudo leer el log)")
+        lines.append(sep + "\n")
+        try:
+            with REPORTS_PATH.open("a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except Exception as e:
+            messagebox.showerror("Maceta",
+                                 f"No se pudo guardar el reporte: {e}")
+            return
+        messagebox.showinfo(
+            "Maceta",
+            "¡Gracias! Reporte guardado.\n\nLo revisaremos y lo "
+            "arreglaremos. Puedes seguir usando Maceta normalmente.")
+        self.destroy()
+
+    def _show_saved(self):
+        if not REPORTS_PATH.exists():
+            messagebox.showinfo("Maceta",
+                                "Aún no has guardado ningún reporte.")
+            return
+        try:
+            contenido = REPORTS_PATH.read_text(encoding="utf-8",
+                                               errors="replace")
+        except Exception as e:
+            messagebox.showerror("Maceta", f"No se pudo leer: {e}")
+            return
+        win = tk.Toplevel(self)
+        win.title(f"Reportes guardados — {REPORTS_PATH}")
+        win.geometry("680x500")
+        t = tk.Text(win, wrap="word")
+        t.pack(fill=tk.BOTH, expand=True)
+        t.insert("1.0", contenido)
+        t.configure(state="disabled")
+
+
 class DuplicatesDialog(tk.Toplevel):
     """Busca duplicados en la biblioteca cargada y deja enviar las copias
     sobrantes a la papelera. Nunca borra: usa to_trash. Siempre se queda la
@@ -3961,6 +4081,8 @@ class MacetaApp(tk.Tk):
         mb.add_cascade(label="Ayuda", menu=m_help)
         m_help.add_command(label="📖 Manual de Maceta…",
                            command=self.on_manual)
+        m_help.add_command(label="🐞 Reportar un problema…",
+                           command=self.on_report_problem)
         m_help.add_separator()
         m_help.add_command(label="Comprobar actualizaciones…",
                            command=self.on_check_updates)
@@ -4321,7 +4443,12 @@ class MacetaApp(tk.Tk):
             MACETA_ROOT / "CHANGELOG.md",
             up_to_version=VERSION,
         )
-        WhatsNewDialog(self, VERSION, entries or "No hay CHANGELOG.md")
+        WhatsNewDialog(
+            self, VERSION, entries or "No hay CHANGELOG.md",
+            heading="📜 Changelog de Maceta",
+            subtitle="Todas las versiones y su fecha — lo que se ha ido "
+                     "arreglando y añadiendo (desplázate para ver el "
+                     "historial):")
 
     def on_open_log(self):
         if not LOG_PATH.exists():
@@ -8460,6 +8587,9 @@ class MacetaApp(tk.Tk):
                 idx.append((toks, name))
         return idx
 
+    def on_report_problem(self):
+        ReportDialog(self)
+
     def on_find_duplicates(self):
         if not self.rows_by_iid:
             messagebox.showinfo(
@@ -9089,6 +9219,13 @@ MACETA_MANUAL = [
         "• 🎧 Wishlist — temas que quieres conseguir (p. ej. de una "
         "playlist de Spotify), con su estado de descarga.",
     ]),
+    ("🐞 Reportar un problema", [
+        "Menú → Ayuda → «Reportar un problema…». Si algo falla o se comporta "
+        "raro, cuéntalo ahí: elige en qué parte del programa pasó, escribe "
+        "qué ha pasado y qué esperabas, y guarda. Se queda en tu ordenador "
+        "(fichero reportes.txt junto a Maceta) con la versión y el log, y "
+        "así podemos mirarlo y arreglarlo. No se envía nada por internet.",
+    ]),
     ("🧹 Limpiar duplicados", [
         "Menú → Biblioteca → «Limpiar duplicados…». Busca canciones "
         "repetidas en la carpeta que tengas cargada: idénticas (mismo "
@@ -9337,22 +9474,26 @@ class ManualDialog(tk.Toplevel):
 class WhatsNewDialog(tk.Toplevel):
     """Popup con las novedades entre la versión anterior y la actual."""
 
-    def __init__(self, master, version, markdown_text):
+    def __init__(self, master, version, markdown_text,
+                 heading=None, subtitle=None):
         super().__init__(master)
-        self.title(f"Novedades — v{version}")
-        self.geometry("620x520")
+        self.title(f"Novedades — v{version}" if heading is None
+                   else heading)
+        self.geometry("620x560")
         self.transient(master)
 
         top = ttk.Frame(self, padding=(12, 12, 12, 0))
         top.pack(fill=tk.X)
         ttk.Label(
             top,
-            text=f"✨ Novedades en Maceta v{version}",
+            text=(f"✨ Novedades en Maceta v{version}" if heading is None
+                  else heading),
             font=("TkDefaultFont", 14, "bold"),
         ).pack(anchor="w")
         ttk.Label(
             top,
-            text="Esto es lo que ha cambiado desde tu versión anterior:",
+            text=(subtitle if subtitle is not None
+                  else "Esto es lo que ha cambiado desde tu versión anterior:"),
             foreground="#9a9a9a",
         ).pack(anchor="w", pady=(4, 0))
 
