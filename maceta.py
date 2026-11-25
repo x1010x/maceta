@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.70"
+VERSION = "0.4.71"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2622,7 +2622,7 @@ def row_bucket(row: dict) -> str:
     if s.startswith("✓"):
         return "sustituidas"
     # Una descarga que no cuadra con el original manda sobre el veredicto.
-    if "no coincide" in s:
+    if "no coincide" in s or "revisar" in s:
         return "a_revisar"
     if not row.get("analyzed"):
         return "sin_analizar"
@@ -4252,6 +4252,8 @@ class MacetaApp(tk.Tk):
             threading.Thread(
                 target=self._scan_folder, args=(last,), daemon=True
             ).start()
+        else:
+            self._wish_sync_review_rows()
 
     def _min_bitrate_for(self, row=None):
         """Devuelve el mínimo bitrate aceptable según preferencias.
@@ -4727,6 +4729,8 @@ class MacetaApp(tk.Tk):
         root = self.folder.get()
         stats = {}
         for row in self.rows_by_iid.values():
+            if row.get("from_wishlist"):     # viven en descargas, no en la carpeta
+                continue
             p = Path(row.get("path") or "")
             bucket = row_bucket(row)
             d = p.parent
@@ -5532,9 +5536,13 @@ class MacetaApp(tk.Tk):
         now_hidden = set()
 
         for iid, row in self.rows_by_iid.items():
-            # Fuera de la carpeta elegida no cuenta ni para los chips:
-            # así los contadores son las estadísticas de esa carpeta.
-            if not self._in_folder_filter(row):
+            b = row_bucket(row)
+            in_folder = self._in_folder_filter(row)
+            is_review = (b == "a_revisar")
+            # "Revisar" es transversal: cuenta y se puede ver aunque la fila
+            # esté fuera de la carpeta activa o venga de la Wishlist
+            # (descargas). El resto de buckets siguen acotados a la carpeta.
+            if not in_folder and not is_review:
                 now_hidden.add(iid)
                 if iid not in prev_hidden:
                     try:
@@ -5542,16 +5550,18 @@ class MacetaApp(tk.Tk):
                     except Exception:
                         pass
                 continue
-            b = row_bucket(row)
             counts[b] += 1
-            counts["todas"] += 1
+            if in_folder and not row.get("from_wishlist"):
+                counts["todas"] += 1
 
             match = (not pattern_lc) or fnmatch.fnmatch(
                 row["name"].lower(), pattern_lc)
             if pending_only:
                 slsk = (row.get("slsk_status") or "").lower()
                 match = match and "no coincide" in slsk
-            if bucket != "todas":
+            if bucket == "todas":
+                match = match and in_folder and not row.get("from_wishlist")
+            else:
                 match = match and b == bucket
 
             if match:
@@ -5579,7 +5589,8 @@ class MacetaApp(tk.Tk):
             if key == "todas" or not total:
                 btn.configure(text=f"{base} ({n})")
             else:
-                btn.configure(text=f"{base} ({n} · {100 * n / total:.0f}%)")
+                pct = min(100, 100 * n / total)
+                btn.configure(text=f"{base} ({n} · {pct:.0f}%)")
 
         if self.folder_filter:
             self.status.set(
@@ -5804,6 +5815,7 @@ class MacetaApp(tk.Tk):
 
     def _scan_done(self, n, cached=0):
         self.progress.set(0)
+        self._wish_sync_review_rows()
         self.status.set(
             f"{n} archivos listados" + (f" · {cached} ya analizados (índice)" if cached else "") + " — selecciona y pulsa Analizar "
             "(Cmd/Ctrl+A para todas)"
@@ -7964,6 +7976,7 @@ class MacetaApp(tk.Tk):
         self._manual_needed.clear()
         self.progress.set(0)
         self.folder.set("")
+        self._wish_sync_review_rows()
         self.status.set("Lista vaciada")
 
     def on_show_spectrum(self, _event=None):
@@ -8236,14 +8249,76 @@ class MacetaApp(tk.Tk):
     def _wish_analyze(self, iid, path):
         """Un tema de Wishlist no tiene original que comparar, así que lo
         verificamos solo: 320 real y no FAKE → «buena» (OK); si no → a
-        «revisar» para que el usuario lo mire."""
+        «revisar» para que el usuario lo mire. Guarda los datos técnicos en
+        el item para poder pintarlo en Biblioteca sin re-analizar."""
+        tech = None
         try:
-            ok, reason = verify_download_quality(
-                path, min_bitrate=GOOD_MP3_MIN_BR)
+            row = analyze_row(scan_row(path))
+            codec = (row.get("codec") or "").upper()
+            br = row.get("bitrate_kbps") or 0
+            if codec in ("FLAC", "WAV"):
+                ok, reason = True, f"{codec} lossless"
+            elif row.get("verdict") == "FAKE":
+                ok, reason = False, row.get("detail") or "FAKE"
+            elif row.get("verdict") == "ERROR":
+                ok, reason = False, "no decodificable"
+            elif br < GOOD_MP3_MIN_BR:
+                ok, reason = False, f"declara {br} kbps (< {GOOD_MP3_MIN_BR})"
+            else:
+                ok, reason = True, f"corte {row.get('cutoff_hz')} Hz"
+            tech = {k: row.get(k) for k in
+                    ("codec", "bitrate_kbps", "sample_rate", "duration_s",
+                     "bpm", "cutoff_hz", "verdict", "detail")}
         except Exception as e:
             ok, reason = False, str(e)[:60]
+        it = self._wish_item(iid)
+        if it is not None and tech is not None:
+            it["tech"] = tech
         self.after(0, self._wish_set_status, iid,
                    "buena" if ok else "revisar", "", reason)
+        self.after(0, self._wish_sync_review_rows)
+
+    def _wish_sync_review_rows(self):
+        """Mete en la tabla de Biblioteca (como filas marcadas «from_wishlist»)
+        los temas de la Wishlist que están «a revisar», para que salgan todos
+        juntos en el chip Revisar. Se re-sincroniza tras cada escaneo porque
+        rows_by_iid se vacía al cambiar de carpeta."""
+        if not hasattr(self, "tree"):
+            return
+        for iid in [i for i, r in list(self.rows_by_iid.items())
+                    if r.get("from_wishlist")]:
+            if self.tree.exists(iid):
+                self.tree.delete(iid)
+            self.rows_by_iid.pop(iid, None)
+        for it in self.wishlist:
+            if it.get("status") != "revisar":
+                continue
+            path = it.get("path") or ""
+            if not path or not Path(path).exists():
+                continue
+            tech = it.get("tech") or {}
+            nombre = (f'{it.get("artist", "")} - {it.get("title", "")}'
+                      .strip(" -")) or Path(path).name
+            detalle = it.get("detail", "")
+            row = {
+                "path": path, "name": nombre,
+                "codec": tech.get("codec"),
+                "bitrate_kbps": tech.get("bitrate_kbps"),
+                "sample_rate": tech.get("sample_rate"),
+                "duration_s": tech.get("duration_s"),
+                "bpm": tech.get("bpm"), "cutoff_hz": tech.get("cutoff_hz"),
+                "verdict": tech.get("verdict") or "",
+                "detail": tech.get("detail") or detalle,
+                "analyzed": True, "from_wishlist": True,
+                "slsk_status": (f"⚠ revisar · {detalle}" if detalle
+                                else "⚠ revisar"),
+            }
+            riid = f"wrev:{it['id']}"
+            tag = row["verdict"] if row["verdict"] else "PENDING"
+            self.tree.insert("", tk.END, iid=riid, text=row["name"],
+                             values=self._row_values(row), tags=(tag,))
+            self.rows_by_iid[riid] = row
+        self._schedule_filter_refresh()
 
     def _wish_search_pending(self, only=None):
         """Encola los temas pendientes/no-encontrados de la Wishlist."""
@@ -8277,6 +8352,7 @@ class MacetaApp(tk.Tk):
                                  args=(client,), daemon=True).start()
         save_wishlist(self.wishlist)
         self._refresh_wishlist_tree()
+        self._wish_sync_review_rows()
         return queued
 
     def _build_wishlist_tab(self, parent):
@@ -8378,6 +8454,7 @@ class MacetaApp(tk.Tk):
         self.wishlist = [it for it in self.wishlist if it["id"] not in sel]
         save_wishlist(self.wishlist)
         self._refresh_wishlist_tree()
+        self._wish_sync_review_rows()
 
     def on_wish_clear_done(self):
         antes = len(self.wishlist)
@@ -8386,6 +8463,7 @@ class MacetaApp(tk.Tk):
         quitados = antes - len(self.wishlist)
         save_wishlist(self.wishlist)
         self._refresh_wishlist_tree()
+        self._wish_sync_review_rows()
         self.status.set(f"Quitadas {quitados} buenas de la Wishlist.")
 
     def cancel_search_queue(self, iids=None):
@@ -8745,6 +8823,11 @@ MACETA_MANUAL = [
         "Botones: 🔎 buscar los pendientes, ↻ reintentar los seleccionados, "
         "🗑 quitar de la lista, 🧹 limpiar los ya descargados. Los ficheros "
         "bajados aparecen en la carpeta y pestaña de Descargas.",
+        "",
+        "Las que salen «a revisar» también aparecen en el chip ⚠ Revisar "
+        "de Biblioteca, junto con el resto de cosas por revisar. Ese chip "
+        "es global: muestra todo lo pendiente de revisar sin importar la "
+        "carpeta que tengas activa.",
     ]),
     ("Biblioteca: el explorador de carpetas (izquierda)", [
         "A la izquierda está el árbol de tus carpetas, con cuántos temas, "

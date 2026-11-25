@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.71
+
+- **El chip «⚠ Revisar» ahora es global** y junta TODO lo que está por
+  revisar: ya no depende de la carpeta que tengas activa (muestra las de
+  toda la biblioteca), y además incluye los temas de la **Wishlist** que
+  salieron «a revisar» (marcados como venidos de descargas, con su corte y
+  veredicto). Así tienes un único sitio con todo lo que hay que mirar. El
+  resto de chips siguen acotados a la carpeta activa.
+
 ## 0.4.70
 
 - **La Wishlist verifica la calidad al bajar.** Como esos temas no tienen
