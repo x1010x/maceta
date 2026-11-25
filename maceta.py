@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.69"
+VERSION = "0.4.70"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2892,7 +2892,10 @@ WISH_STATUS = {
     "en cola":       "⏳ en cola",
     "buscando":      "🔎 buscando",
     "descargando":   "↓ descargando",
+    "analizando":    "⏳ analizando…",
     "descargado":    "✅ descargado",
+    "buena":         "✅ buena (OK)",
+    "revisar":       "⚠ revisar",
     "no_encontrado": "✗ no encontrado",
 }
 WISH_COLORS = {
@@ -2900,9 +2903,20 @@ WISH_COLORS = {
     "en cola":       "#8a6d00",
     "buscando":      "#8a6d00",
     "descargando":   "#0a5aa8",
+    "analizando":    "#0a5aa8",
     "descargado":    "#0a7f2e",
+    "buena":         "#0a7f2e",
+    "revisar":       "#b07a00",
     "no_encontrado": "#b0261f",
 }
+WISH_DONE = ("buena", "descargado")   # estados de "ya conseguida y buena"
+
+
+def wish_status_label(it: dict) -> str:
+    base = WISH_STATUS.get(it.get("status", "pendiente"),
+                           it.get("status", ""))
+    det = it.get("detail", "")
+    return f"{base} · {det}" if det else base
 
 
 def load_wishlist() -> list:
@@ -3212,7 +3226,8 @@ class MacetaApp(tk.Tk):
         self._escalation: dict[str, dict] = {}
         self.wishlist = load_wishlist()
         for _it in self.wishlist:   # estados en vuelo no sobreviven reinicio
-            if _it.get("status") in ("buscando", "en cola", "descargando"):
+            if _it.get("status") in ("buscando", "en cola", "descargando",
+                                     "analizando"):
                 _it["status"] = "pendiente"
         _nums = [int(it["id"].split(":")[1]) for it in self.wishlist
                  if str(it.get("id", "")).startswith("wish:")
@@ -6465,11 +6480,17 @@ class MacetaApp(tk.Tk):
                             continue
                         self.finalized_dl_keys.add(key)
                         if self._wish_item(orig_iid) is not None:
-                            # Tema de Wishlist: baja y listo, sin sustituir.
-                            self._wish_set_status(orig_iid, "descargado",
+                            # Tema de Wishlist: no hay original que sustituir.
+                            # Se baja y se verifica solo (320 + no FAKE):
+                            # buena → OK, si no → revisar.
+                            self._wish_set_status(orig_iid, "analizando",
                                                   path=str(local))
                             self._set_slsk_status(orig_iid, "✓ descargado")
                             self._release_active(orig_iid)
+                            threading.Thread(
+                                target=self._wish_analyze,
+                                args=(orig_iid, str(local)),
+                                daemon=True).start()
                             continue
                         row = self.rows_by_iid.get(orig_iid)
                         is_flac = local.suffix.lower() == ".flac"
@@ -8197,18 +8218,32 @@ class MacetaApp(tk.Tk):
                 return it
         return None
 
-    def _wish_set_status(self, iid, status, path=""):
+    def _wish_set_status(self, iid, status, path="", detail=None):
         it = self._wish_item(iid)
         if it is None:
             return
         it["status"] = status
         if path:
             it["path"] = path
+        if detail is not None:
+            it["detail"] = detail
         save_wishlist(self.wishlist)
         if hasattr(self, "wish_tree") and self.wish_tree.exists(iid):
-            self.wish_tree.item(iid, values=(WISH_STATUS.get(status, status),),
+            self.wish_tree.item(iid, values=(wish_status_label(it),),
                                 tags=(status,))
             self._update_wish_count()
+
+    def _wish_analyze(self, iid, path):
+        """Un tema de Wishlist no tiene original que comparar, así que lo
+        verificamos solo: 320 real y no FAKE → «buena» (OK); si no → a
+        «revisar» para que el usuario lo mire."""
+        try:
+            ok, reason = verify_download_quality(
+                path, min_bitrate=GOOD_MP3_MIN_BR)
+        except Exception as e:
+            ok, reason = False, str(e)[:60]
+        self.after(0, self._wish_set_status, iid,
+                   "buena" if ok else "revisar", "", reason)
 
     def _wish_search_pending(self, only=None):
         """Encola los temas pendientes/no-encontrados de la Wishlist."""
@@ -8221,7 +8256,8 @@ class MacetaApp(tk.Tk):
         for it in self.wishlist:
             if only is not None and it["id"] not in only:
                 continue
-            if it.get("status") == "descargado":
+            if only is None and it.get("status") not in (
+                    "pendiente", "no_encontrado"):
                 continue
             if it["id"] in self.active_by_iid:
                 continue
@@ -8289,10 +8325,14 @@ class MacetaApp(tk.Tk):
         if not hasattr(self, "wish_count"):
             return
         done = sum(1 for it in self.wishlist
-                   if it.get("status") == "descargado")
+                   if it.get("status") in WISH_DONE)
+        rev = sum(1 for it in self.wishlist
+                  if it.get("status") == "revisar")
         falta = sum(1 for it in self.wishlist
                     if it.get("status") == "no_encontrado")
-        txt = f"{len(self.wishlist)} temas · {done} descargados"
+        txt = f"{len(self.wishlist)} temas · {done} buenas"
+        if rev:
+            txt += f" · {rev} a revisar"
         if falta:
             txt += f" · {falta} sin encontrar"
         self.wish_count.configure(text=txt)
@@ -8306,7 +8346,7 @@ class MacetaApp(tk.Tk):
                       .strip(" -"))
             st = it.get("status", "pendiente")
             self.wish_tree.insert("", tk.END, iid=it["id"], text=nombre,
-                                  values=(WISH_STATUS.get(st, st),),
+                                  values=(wish_status_label(it),),
                                   tags=(st,))
         self._update_wish_count()
 
@@ -8342,11 +8382,11 @@ class MacetaApp(tk.Tk):
     def on_wish_clear_done(self):
         antes = len(self.wishlist)
         self.wishlist = [it for it in self.wishlist
-                         if it.get("status") != "descargado"]
+                         if it.get("status") not in WISH_DONE]
         quitados = antes - len(self.wishlist)
         save_wishlist(self.wishlist)
         self._refresh_wishlist_tree()
-        self.status.set(f"Quitados {quitados} ya descargados de la Wishlist.")
+        self.status.set(f"Quitadas {quitados} buenas de la Wishlist.")
 
     def cancel_search_queue(self, iids=None):
         """Quita canciones de la cola de búsqueda (las que aún no se han

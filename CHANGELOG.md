@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.70
+
+- **La Wishlist verifica la calidad al bajar.** Como esos temas no tienen
+  original que comparar, al descargarse Maceta los analiza solo: si están a
+  **320 y no son FAKE**, los marca **✅ buena (OK)**; si no (bitrate bajo o
+  corte sospechoso), los pone en **⚠ revisar** con el motivo, para que los
+  mires. El contador muestra «N buenas · M a revisar». «Limpiar» quita las
+  buenas y deja las de revisar.
+
 ## 0.4.69
 
 - En la Wishlist, el botón de buscar ahora pone **«🔎 Buscar todos»** (con
