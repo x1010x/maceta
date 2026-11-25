@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.87 — 2026-11-25
+
+- **Seleccionar todas en Actividad Soulseek** (pedido por un usuario):
+  botón **☑** en Búsquedas, Resultados y Descargas, y **Cmd+A** ahora
+  funciona en cualquiera de esas tablas (antes solo en Biblioteca). Útil
+  para bajar/cancelar en bloque.
+- **Colores del panel de Carpetas editables** (Preferencias → Colores):
+  «Carpetas — con FAKE» y «Carpetas — limpia».
+
 ## 0.4.86 — 2026-11-25
 
 - **Colores de Actividad Soulseek, ahora editables** (pedido por un

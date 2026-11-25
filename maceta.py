@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.86"
+VERSION = "0.4.87"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2750,6 +2750,9 @@ COLOR_SPEC = [
     ("act_filtered",   "Soulseek — búsqueda filtrada",      "#c9890a"),
     ("act_done",       "Soulseek — ya descargada",          "#1a7f37"),
     ("act_related_bg", "Soulseek — relacionada (fondo)",    "#2d3b1f"),
+    # --- Panel de carpetas (Biblioteca, izquierda) ---
+    ("folder_hasfake", "Carpetas — con FAKE",               "#d04a3f"),
+    ("folder_clean",   "Carpetas — limpia (sin FAKE)",      "#1a7f37"),
 ]
 
 
@@ -5420,8 +5423,7 @@ class MacetaApp(tk.Tk):
             self.folder_tree.heading(c, text=t)
             self.folder_tree.column(c, width=w, minwidth=40, anchor=tk.E,
                                     stretch=False)
-        self.folder_tree.tag_configure("hasfake", foreground="#d04a3f")
-        self.folder_tree.tag_configure("clean", foreground="#1a7f37")
+        self._apply_folder_tree_colors()
         self.folder_tree.bind("<<TreeviewSelect>>",
                               lambda _e: self._on_folder_selected())
         self._folder_paths = {}      # iid -> ruta
@@ -5698,6 +5700,9 @@ class MacetaApp(tk.Tk):
                                     anchor=tk.W, stretch=False)
         s_btns = ttk.Frame(s_frame)
         s_btns.pack(fill=tk.X, pady=(4, 0))
+        icon_button(s_btns, "☑", "Seleccionar todas (Cmd+A)",
+                    lambda: self._select_all_in(self.search_tree),
+                    side=tk.LEFT, padx=(0, 8))
         icon_button(s_btns, "✕", "Cancelar la búsqueda seleccionada",
                     self.on_cancel_search, side=tk.LEFT)
         icon_button(s_btns, "✎", "Rebuscar editando la query",
@@ -5759,6 +5764,9 @@ class MacetaApp(tk.Tk):
                                     anchor=tk.W, stretch=False)
         r_btns = ttk.Frame(r_frame)
         r_btns.pack(fill=tk.X, pady=(4, 0))
+        icon_button(r_btns, "☑", "Seleccionar todos (Cmd+A)",
+                    lambda: self._select_all_in(self.results_tree),
+                    side=tk.LEFT, padx=(0, 8))
         icon_button(r_btns, "⬇", "Descargar los resultados seleccionados",
                     self._download_selected_results, side=tk.LEFT)
         icon_button(r_btns, "↻", "Recargar los resultados",
@@ -5796,6 +5804,9 @@ class MacetaApp(tk.Tk):
                           lambda _e: self._sync_search_from_dl())
         d_btns = ttk.Frame(d_frame)
         d_btns.pack(fill=tk.X, pady=(4, 0))
+        icon_button(d_btns, "☑", "Seleccionar todas (Cmd+A)",
+                    lambda: self._select_all_in(self.dl_tree),
+                    side=tk.LEFT, padx=(0, 8))
         icon_button(d_btns, "✕", "Cancelar la descarga seleccionada",
                     lambda: self.on_cancel_download(remove=False),
                     side=tk.LEFT)
@@ -6386,6 +6397,15 @@ class MacetaApp(tk.Tk):
         except Exception:
             pass
 
+    def _apply_folder_tree_colors(self):
+        t = getattr(self, "folder_tree", None)
+        if t is None:
+            return
+        c = self.colors
+        t.tag_configure("hasfake",
+                        foreground=c.get("folder_hasfake", "#d04a3f"))
+        t.tag_configure("clean", foreground=c.get("folder_clean", "#1a7f37"))
+
     def _apply_search_tree_colors(self):
         """Colores de las filas de búsqueda en Actividad, configurables
         desde el editor de Colores."""
@@ -6431,6 +6451,7 @@ class MacetaApp(tk.Tk):
         except Exception:
             pass
         self._apply_search_tree_colors()
+        self._apply_folder_tree_colors()
         # Tags de veredicto en el tree principal
         for verdict, key in [("OK", "verdict_OK"),
                              ("LOSSLESS", "verdict_LOSSLESS"),
@@ -6464,9 +6485,20 @@ class MacetaApp(tk.Tk):
         ManualDialog(self)
 
     def _select_all_tree(self, _event=None):
-        if self.focus_get() is self.tree:
-            self.tree.selection_set(self.tree.get_children(""))
-            return "break"
+        w = self.focus_get()
+        if isinstance(w, ttk.Treeview):
+            try:
+                w.selection_set(w.get_children(""))
+                return "break"
+            except Exception:
+                pass
+
+    def _select_all_in(self, tree):
+        try:
+            tree.selection_set(tree.get_children(""))
+            tree.focus_set()
+        except Exception:
+            pass
 
     def _apply_compact_cols(self):
         """Compacto: una celda `● 320` en vez de Formato+Bitrate+SR."""
