@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.82"
+VERSION = "0.4.83"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3147,13 +3147,21 @@ class ImageAnnotator(tk.Toplevel):
     COLORS = [("🔴", "#e23b2e"), ("🟡", "#f2c200"),
               ("🟢", "#2ecc55"), ("🔵", "#2e7be2")]
 
-    def __init__(self, app, image_path, out_path, on_save):
+    def __init__(self, app, image_path, out_path, on_save, on_close=None):
         super().__init__(app)
         self.app = app
         self.out_path = str(out_path)
         self.on_save = on_save
+        self._on_close = on_close
         self.title("Marca el problema con el pincel")
         self.transient(app)
+        self.lift()
+        self.focus_force()
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+        self.protocol("WM_DELETE_WINDOW", self._finish)
         from PIL import Image, ImageDraw, ImageTk
         self._Image, self._ImageDraw, self._ImageTk = Image, ImageDraw, ImageTk
 
@@ -3214,7 +3222,7 @@ class ImageAnnotator(tk.Toplevel):
         ttk.Button(btns, text="✓ Guardar y adjuntar",
                    command=self._do_save).pack(side=tk.RIGHT)
         ttk.Button(btns, text="Cancelar",
-                   command=self.destroy).pack(side=tk.RIGHT, padx=6)
+                   command=self._finish).pack(side=tk.RIGHT, padx=6)
 
     def _set_color(self, c):
         self.color = c
@@ -3260,6 +3268,12 @@ class ImageAnnotator(tk.Toplevel):
         self.strokes = []
         self._render()
 
+    def _finish(self):
+        cb = self._on_close
+        self.destroy()
+        if cb:
+            cb()
+
     def _do_save(self):
         try:
             self.img.save(self.out_path)
@@ -3268,7 +3282,7 @@ class ImageAnnotator(tk.Toplevel):
             return
         if self.on_save:
             self.on_save(self.out_path)
-        self.destroy()
+        self._finish()
 
 
 class ReportDialog(tk.Toplevel):
@@ -3281,8 +3295,14 @@ class ReportDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Reportar un problema")
-        self.geometry("600x560")
+        self.geometry("600x580")
         self.transient(app)
+        self.lift()
+        self.focus_force()
+        try:
+            self.grab_set()        # coger el foco aunque haya otro diálogo
+        except tk.TclError:
+            pass
 
         ttk.Label(self, padding=(14, 12, 14, 2), justify="left",
                   wraplength=560, foreground="#888",
@@ -3415,10 +3435,22 @@ class ReportDialog(tk.Toplevel):
             self._attached = saved
             self.att_lbl.configure(text="✓ imagen marcada adjunta",
                                    foreground="#0a7f2e")
+
+        def regrab():
+            try:
+                self.grab_set()
+                self.lift()
+            except tk.TclError:
+                pass
         try:
-            ImageAnnotator(self.app, p, str(SHOT_TMP), done)
+            self.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            ImageAnnotator(self.app, p, str(SHOT_TMP), done, on_close=regrab)
         except Exception as e:
             log.warning("no se pudo abrir el editor de marcado: %s", e)
+            regrab()
 
     def _grab_screen(self, png) -> bool:
         """Captura la pantalla (quitando este diálogo de la foto) en `png`.
@@ -3491,7 +3523,19 @@ class ReportDialog(tk.Toplevel):
             self._attached = saved
             self.att_lbl.configure(text="✓ imagen marcada adjunta",
                                    foreground="#0a7f2e")
-        ImageAnnotator(self.app, str(SHOT_TMP), str(SHOT_TMP), done)
+
+        def regrab():
+            try:
+                self.grab_set()
+                self.lift()
+            except tk.TclError:
+                pass
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        ImageAnnotator(self.app, str(SHOT_TMP), str(SHOT_TMP), done,
+                       on_close=regrab)
 
     def _show_saved(self):
         if not REPORTS_PATH.exists():

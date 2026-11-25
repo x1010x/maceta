@@ -3,6 +3,12 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.83 — 2026-11-25
+
+- Arreglado: si tenías otra ventana abierta (p. ej. «Renombrar / tags»), no
+  se podían pulsar los botones del diálogo «Reportar un problema» ni del
+  editor de marcado. Ahora esos diálogos toman el foco al abrirse.
+
 ## 0.4.82 — 2026-11-25
 
 - La ventana para marcar la captura ahora se **ajusta al tamaño de tu
