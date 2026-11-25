@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.83"
+VERSION = "0.4.84"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3386,7 +3386,7 @@ class ReportDialog(tk.Toplevel):
         lines = [sep,
                  f"[{time.strftime('%Y-%m-%d %H:%M:%S')}]  Maceta {VERSION}",
                  f"Parte: {self.parte.get()}"]
-        for im in imgs:
+        for im in dict.fromkeys(imgs):
             lines.append(f"Captura: {im}")
         lines += ["-" * 60, desc, "-" * 60]
         if self.incluir.get():
@@ -3462,9 +3462,10 @@ class ReportDialog(tk.Toplevel):
             pass
         err = ""
         try:
-            self.withdraw()
-            self.app.update_idletasks()
-            time.sleep(0.5)
+            self.withdraw()               # quitar este diálogo de la foto
+            self.update()
+            self.app.update()
+            time.sleep(0.6)
             if sys.platform == "darwin":
                 r = subprocess.run(
                     ["/usr/sbin/screencapture", "-x", str(png)],
@@ -10114,8 +10115,11 @@ class SmartRenameDialog(tk.Toplevel):
         self.row = row
         self.path = Path(row["path"])
         self.title(f"Renombrar / tags — {self.path.name}")
-        self.geometry("640x460")
+        self.geometry("640x560")
+        self.minsize(560, 480)
         self.transient(app)
+        self.lift()
+        self.focus_force()
         self.grab_set()
 
         current_tags = read_song_tags(str(self.path))
@@ -10128,7 +10132,34 @@ class SmartRenameDialog(tk.Toplevel):
         ttk.Label(header, text=self.path.name,
                   font=("TkDefaultFont", 11, "bold")).pack(anchor="w")
 
-        # Grid con tags editables
+        # Botonera SIEMPRE visible: se reserva abajo ANTES del body, para
+        # que si falta alto se encoja el body y no se pierdan los botones.
+        btns = ttk.Frame(self, padding=(12, 8, 12, 12))
+        btns.pack(fill=tk.X, side=tk.BOTTOM)
+        ttk.Button(btns, text="Cancelar",
+                   command=self.destroy).pack(side=tk.RIGHT)
+        ttk.Button(btns, text="✓ Aplicar",
+                   command=self._apply).pack(side=tk.RIGHT, padx=6)
+
+        ctl = ttk.Frame(self, padding=(12, 4))
+        ctl.pack(fill=tk.X, side=tk.BOTTOM)
+        self.apply_tags_var = tk.BooleanVar(value=True)
+        self.rename_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctl, text="Actualizar tags ID3",
+                        variable=self.apply_tags_var).pack(side=tk.LEFT)
+        ttk.Checkbutton(ctl, text="Renombrar fichero",
+                        variable=self.rename_var).pack(side=tk.LEFT, padx=12)
+
+        prev_frame = ttk.LabelFrame(self, text="Vista previa",
+                                    padding=(12, 8))
+        prev_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=12, pady=(6, 4))
+        ttk.Label(prev_frame, text="Nuevo nombre de fichero:").pack(anchor="w")
+        self.new_name_var = tk.StringVar()
+        self.new_name_entry = ttk.Entry(
+            prev_frame, textvariable=self.new_name_var)
+        self.new_name_entry.pack(fill=tk.X, pady=(4, 0))
+
+        # Grid con tags editables (rellena el espacio que quede)
         body = ttk.Frame(self, padding=(12, 4))
         body.pack(fill=tk.BOTH, expand=True)
         body.columnconfigure(1, weight=1)
@@ -10156,33 +10187,6 @@ class SmartRenameDialog(tk.Toplevel):
                    command=self._auto_detect).grid(
                        row=len(rows), column=0, columnspan=2,
                        sticky="w", pady=(8, 0))
-
-        # Preview del nuevo filename
-        prev_frame = ttk.LabelFrame(self, text="Vista previa",
-                                    padding=(12, 8))
-        prev_frame.pack(fill=tk.X, padx=12, pady=(6, 4))
-        ttk.Label(prev_frame, text="Nuevo nombre de fichero:").pack(anchor="w")
-        self.new_name_var = tk.StringVar()
-        self.new_name_entry = ttk.Entry(
-            prev_frame, textvariable=self.new_name_var)
-        self.new_name_entry.pack(fill=tk.X, pady=(4, 0))
-
-        # Toggles + botones
-        ctl = ttk.Frame(self, padding=(12, 4))
-        ctl.pack(fill=tk.X)
-        self.apply_tags_var = tk.BooleanVar(value=True)
-        self.rename_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(ctl, text="Actualizar tags ID3",
-                        variable=self.apply_tags_var).pack(side=tk.LEFT)
-        ttk.Checkbutton(ctl, text="Renombrar fichero",
-                        variable=self.rename_var).pack(side=tk.LEFT, padx=12)
-
-        btns = ttk.Frame(self, padding=(12, 8, 12, 12))
-        btns.pack(fill=tk.X, side=tk.BOTTOM)
-        ttk.Button(btns, text="Cancelar",
-                   command=self.destroy).pack(side=tk.RIGHT)
-        ttk.Button(btns, text="✓ Aplicar",
-                   command=self._apply).pack(side=tk.RIGHT, padx=6)
 
         # Refresh inicial
         self._refresh_preview()

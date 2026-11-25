@@ -3,6 +3,14 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.84 — 2026-11-25
+
+- **Arreglado (reportado por un usuario):** en «Renombrar / tags» se
+  cortaban abajo los botones Aplicar/Cancelar. Ahora la botonera tiene su
+  sitio reservado y la ventana es más alta, así siempre se ven.
+- Al capturar la pantalla para un reporte, el propio diálogo de reporte se
+  oculta bien antes de la foto.
+
 ## 0.4.83 — 2026-11-25
 
 - Arreglado: si tenías otra ventana abierta (p. ej. «Renombrar / tags»), no
