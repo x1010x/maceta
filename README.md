@@ -35,9 +35,13 @@ construye la query, filtra por formato, tamaño, duración y cola del peer, y
 elige el mejor resultado. Y elige **por nombre primero** — buscando
 "Black Pumas - Colors" no te cuela un directo de 52 MB solo por ser más grande.
 
-🧬 **Verifica antes de tocar nada.** Compara 30 s del centro de ambos ficheros
-con cromagramas: si la descarga no es la misma canción, no sustituye. Se acabó
-acabar con un remix en vez del original.
+🧬 **Verifica antes de tocar nada.** Confirma por **huella sonora**
+(Chromaprint) que la descarga es la misma canción. Y no sustituye a ciegas:
+si el parecido no es clarísimo te enseña **el porcentaje** y te deja
+reproducir las dos para comparar y decidir. La exigencia es configurable
+(estricto 95 % / medio 90 % / flexible 82 %) y por debajo del umbral la
+canción va a *Revisar* en vez de reemplazarse. Se acabó acabar con un remix
+en vez del original.
 
 🗄️ **Nunca borra tu música.** El original sustituido se archiva en
 `archivo/` con su ruta completa. Si te arrepientes, lo copias de vuelta.
@@ -52,6 +56,22 @@ deja de ser un agujero negro.
 
 💬 **Chat de Soulseek integrado**, porque a veces hay que pedirle el fichero
 al que lo tiene.
+
+🎧 **Importa playlists de Spotify.** Pega el enlace de una playlist, álbum o
+canción y Maceta saca los temas, te avisa de cuáles ya tienes, y baja los que
+faltan a una **Wishlist** con su estado (pendiente / buscando / ✅ / a revisar).
+Sin cuenta de Spotify.
+
+🧹 **Limpia duplicados.** Encuentra la misma canción repetida —idéntica o en
+distinta calidad, confirmado por huella— se queda con la mejor versión y manda
+las sobrantes a la papelera (nunca las borra de verdad).
+
+🎨 **Todo recoloreable.** Un editor de colores para la tabla, el panel de
+carpetas y las listas de Soulseek; tipografía y espaciado de filas ajustables.
+
+🐞 **Reportar problemas con captura.** Un formulario que guarda una nota local
+(con captura de pantalla que puedes **marcar con un pincel**) para contar qué
+falla.
 
 ⚙️ **40 ajustes** en un panel con explicación al lado de cada uno: desde el Hz
 exacto a partir del cual algo es FAKE hasta cuántas veces reintenta antes de
