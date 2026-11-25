@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.79"
+VERSION = "0.4.80"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -93,7 +93,10 @@ MACETA_ROOT = Path(__file__).resolve().parent
 # Reportes del usuario (notas que deja desde Ayuda → Reportar un problema).
 # Texto plano, para leerlo por SSH. Vive junto a maceta.py.
 REPORTS_PATH = MACETA_ROOT / "reportes.txt"
-SHOT_TMP = Path.home() / ".maceta-shot.png"
+# OJO: screencapture NO puede escribir en la raíz del home (macOS lo
+# bloquea: "cannot write file to intended destination"). Debe ir dentro
+# de una subcarpeta como ~/maceta.
+SHOT_TMP = MACETA_ROOT / ".maceta-shot.png"
 DOWNLOADS_DIR = MACETA_ROOT / "downloads"
 ARCHIVE_DIR = MACETA_ROOT / "archivo"
 LOSSLESS_EXTS = {"flac", "wav"}

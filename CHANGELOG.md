@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.80 — 2026-11-25
+
+- **Arreglada la captura de pantalla de los reportes.** macOS no deja a
+  `screencapture` escribir en la raíz de la carpeta personal, y ahí era
+  justo donde Maceta intentaba guardar la foto («cannot write file to
+  intended destination»). Ahora la guarda dentro de la carpeta de Maceta.
+  Con el permiso de «Grabación de pantalla» concedido, «Capturar y marcar»
+  ya funciona.
+
 ## 0.4.79 — 2026-11-25
 
 - La captura de pantalla de los reportes ahora usa la ruta completa de
