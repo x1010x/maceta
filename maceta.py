@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.75"
+VERSION = "0.4.76"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3184,6 +3184,19 @@ class ReportDialog(tk.Toplevel):
             frm, variable=self.incluir,
             text="Incluir datos técnicos (versión y log) — recomendado"
             ).pack(anchor="w")
+        self.captura = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            frm, variable=self.captura,
+            text="Adjuntar captura de pantalla automática — recomendado"
+            ).pack(anchor="w")
+        att = ttk.Frame(frm)
+        att.pack(anchor="w", fill=tk.X, pady=(4, 0))
+        ttk.Button(att, text="📎 Adjuntar imagen…",
+                   command=self._attach_image).pack(side=tk.LEFT)
+        self._attached = None
+        self.att_lbl = ttk.Label(att, text="(o haz Cmd+Shift+4 y adjúntala)",
+                                 foreground="#888")
+        self.att_lbl.pack(side=tk.LEFT, padx=8)
 
         btns = ttk.Frame(self, padding=(14, 4, 14, 12))
         btns.pack(fill=tk.X)
@@ -3199,11 +3212,26 @@ class ReportDialog(tk.Toplevel):
         if not desc:
             messagebox.showinfo("Maceta", "Escribe qué ha pasado primero.")
             return
+        imgs = []
+        if self.captura.get():
+            shot = self._screenshot()
+            if shot:
+                imgs.append(shot)
+        if self._attached:
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            dest = MACETA_ROOT / f"reporte-{ts}{Path(self._attached).suffix}"
+            try:
+                shutil.copy2(self._attached, dest)
+                imgs.append(dest.name)
+            except Exception as e:
+                log.warning("adjuntar imagen falló: %s", e)
         sep = "=" * 60
         lines = [sep,
                  f"[{time.strftime('%Y-%m-%d %H:%M:%S')}]  Maceta {VERSION}",
-                 f"Parte: {self.parte.get()}",
-                 "-" * 60, desc, "-" * 60]
+                 f"Parte: {self.parte.get()}"]
+        for im in imgs:
+            lines.append(f"Captura: {im}")
+        lines += ["-" * 60, desc, "-" * 60]
         if self.incluir.get():
             try:
                 tab = self.app.notebook.tab(
@@ -3232,6 +3260,53 @@ class ReportDialog(tk.Toplevel):
             "¡Gracias! Reporte guardado.\n\nLo revisaremos y lo "
             "arreglaremos. Puedes seguir usando Maceta normalmente.")
         self.destroy()
+
+    def _attach_image(self):
+        p = filedialog.askopenfilename(
+            title="Elige una captura o imagen",
+            filetypes=[("Imágenes", "*.png *.jpg *.jpeg *.gif *.bmp *.heic"),
+                       ("Todos", "*.*")])
+        if p:
+            self._attached = p
+            self.att_lbl.configure(text=f"adjunta: {Path(p).name}",
+                                   foreground="#0a7f2e")
+
+    def _screenshot(self) -> str:
+        """Captura la pantalla (sin este diálogo delante) y la guarda junto
+        a reportes.txt. Devuelve el nombre del PNG o '' si no se pudo.
+        En macOS usa `screencapture`; en otros SO lo intenta con Tk."""
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        png = MACETA_ROOT / f"reporte-{ts}.png"
+        try:
+            self.withdraw()                 # quitar el diálogo de la foto
+            self.app.update_idletasks()
+            self.app.after(0, lambda: None)
+            time.sleep(0.4)
+            if sys.platform == "darwin":
+                subprocess.run(["screencapture", "-x", str(png)],
+                               timeout=15, check=False)
+            elif sys.platform == "win32":
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     "Add-Type -AssemblyName System.Windows.Forms,"
+                     "System.Drawing;"
+                     "$b=[System.Windows.Forms.SystemInformation]::VirtualScreen;"
+                     "$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
+                     "$g=[System.Drawing.Graphics]::FromImage($bmp);"
+                     "$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);"
+                     f"$bmp.Save('{png}')"],
+                    timeout=15, check=False)
+            else:
+                subprocess.run(["import", "-window", "root", str(png)],
+                               timeout=15, check=False)
+        except Exception as e:
+            log.warning("screenshot falló: %s", e)
+        finally:
+            try:
+                self.deiconify()
+            except Exception:
+                pass
+        return png.name if png.exists() else ""
 
     def _show_saved(self):
         if not REPORTS_PATH.exists():

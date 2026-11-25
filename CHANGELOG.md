@@ -3,6 +3,14 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.76 — 2026-11-25
+
+- **Los reportes pueden llevar captura de pantalla.** En «Reportar un
+  problema» ahora puedes adjuntar una imagen: Maceta intenta hacer la
+  captura sola (la primera vez macOS pedirá permiso de «Grabación de
+  pantalla»), y además hay un botón «📎 Adjuntar imagen…» para elegir una
+  captura que hayas hecho con Cmd+Shift+4. Se guarda junto al reporte.
+
 ## 0.4.75 — 2026-11-25
 
 - **El changelog (Ayuda → «Ver changelog…») muestra todas las versiones con
