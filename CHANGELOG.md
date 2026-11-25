@@ -3,6 +3,11 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.89 — 2026-11-25
+
+- Arreglado un fallo al abrir **Opciones** (se rompía por los ajustes nuevos
+  de exigencia/escaneo). Ya abre bien.
+
 ## 0.4.88 — 2026-11-25
 
 - **No sustituir a ciegas.** Antes de reemplazar un original, si el parecido

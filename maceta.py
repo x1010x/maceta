@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.88"
+VERSION = "0.4.89"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -10782,7 +10782,7 @@ OPTION_TABS = [
       "label": "Sensibilidad del corte (dB)",
       "hint": "Energía mínima respecto al pico para considerar que ahí "
               "todavía hay señal. Más negativo = detecta cortes más altos."},
-     {"src": "app", "key": "scan_mode", "kind": "choice",
+     {"src": "app", "key": "scan_mode_var", "kind": "choice",
       "choices": ["completo", "rapido"],
       "label": "Modo de escaneo",
       "hint": "• completo (por defecto) = analiza bien cada canción "
@@ -10902,7 +10902,7 @@ OPTION_TABS = [
       "label": "Sustituir automático desde Descargas",
       "hint": "Usa el link guardado al bajar y, si no hay, compara el "
               "audio. Apagado, el botón pregunta siempre."},
-     {"src": "app", "key": "sub_strictness", "kind": "choice",
+     {"src": "app", "key": "sub_strictness_var", "kind": "choice",
       "choices": ["estricto", "medio", "flexible", "personalizado"],
       "label": "Exigencia para sustituir",
       "hint": "Cuánto debe parecerse la descarga al original para darla "
@@ -10914,14 +10914,14 @@ OPTION_TABS = [
               "• personalizado = usa el valor de abajo a mano.\n"
               "Por debajo del umbral, la canción va a Revisar, no se "
               "sustituye."},
-     {"src": "app", "key": "sub_auto_confirm", "kind": "float",
+     {"src": "app", "key": "sub_auto_confirm_var", "kind": "float",
       "min": 0.5, "max": 1.0, "step": 0.01,
       "label": "No preguntar por encima de",
       "hint": "Si el parecido llega a este %, Maceta sustituye sola sin "
               "preguntar. Entre el umbral de «misma canción» y este, te "
               "enseña el % y decides tú (0.95 = 95%). Ponlo a 1.00 para "
               "que te pregunte SIEMPRE antes de sustituir."},
-     {"src": "app", "key": "fp_match_threshold", "kind": "float",
+     {"src": "app", "key": "fp_match_threshold_var", "kind": "float",
       "min": 0.5, "max": 1.0, "step": 0.01,
       "label": "Umbral huella (si personalizado)",
       "hint": "Umbral de la huella acústica (Chromaprint) cuando la "
