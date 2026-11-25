@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.89"
+VERSION = "0.4.90"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -4172,6 +4172,9 @@ class MacetaApp(tk.Tk):
             statusbar, textvariable=self.status, anchor=tk.W
         )
         self._status_label.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        self.disk_label = ttk.Label(statusbar, anchor=tk.E)
+        self.disk_label.pack(side=tk.RIGHT, padx=(6, 0))
+        self._update_disk_space()
 
         # Notebook con Biblioteca + Actividad
         self.notebook = ttk.Notebook(self)
@@ -7066,6 +7069,32 @@ class MacetaApp(tk.Tk):
                             self._launch_slsk_batch(client, candidates)
         finally:
             self.after(30_000, self._auto_retry_tick)
+
+    DISK_LOW_GB = 10.0   # por debajo de esto, aviso en rojo
+
+    def _update_disk_space(self):
+        """Muestra el espacio libre del disco de tu música; rojo si queda
+        poco (< 10 GB). Se refresca solo cada 30 s."""
+        try:
+            base = self.folder.get() or str(MACETA_ROOT)
+            if not os.path.isdir(base):
+                base = str(Path.home())
+            free_gb = shutil.disk_usage(base).free / (1024 ** 3)
+        except Exception:
+            free_gb = None
+        if hasattr(self, "disk_label"):
+            if free_gb is None:
+                self.disk_label.configure(text="")
+            elif free_gb < self.DISK_LOW_GB:
+                self.disk_label.configure(
+                    text=f"⚠ {free_gb:.1f} GB libres", foreground="#d0211a")
+            else:
+                self.disk_label.configure(
+                    text=f"💾 {free_gb:.0f} GB libres", foreground="#888")
+        try:
+            self.after(30000, self._update_disk_space)
+        except Exception:
+            pass
 
     def _activity_tick(self):
         client = self._slsk_client()

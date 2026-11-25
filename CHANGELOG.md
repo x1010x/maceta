@@ -3,6 +3,12 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.90 — 2026-11-25
+
+- **Espacio libre en la barra de abajo**: muestra los GB libres del disco de
+  tu música y se pone **en rojo** cuando quedan menos de 10 GB, para que no
+  te pille sin sitio bajando FLACs.
+
 ## 0.4.89 — 2026-11-25
 
 - Arreglado un fallo al abrir **Opciones** (se rompía por los ajustes nuevos
