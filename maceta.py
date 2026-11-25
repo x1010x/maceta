@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.77"
+VERSION = "0.4.78"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3395,10 +3395,22 @@ class ReportDialog(tk.Toplevel):
             title="Elige una captura o imagen",
             filetypes=[("Imágenes", "*.png *.jpg *.jpeg *.gif *.bmp *.heic"),
                        ("Todos", "*.*")])
-        if p:
-            self._attached = p
-            self.att_lbl.configure(text=f"adjunta: {Path(p).name}",
+        if not p:
+            return
+        self._attached = p
+        self.att_lbl.configure(text=f"adjunta: {Path(p).name}",
+                               foreground="#0a7f2e")
+
+        # Abrir el pincel para marcarla (opcional). Si la cierra sin
+        # guardar, se queda la imagen tal cual.
+        def done(saved):
+            self._attached = saved
+            self.att_lbl.configure(text="✓ imagen marcada adjunta",
                                    foreground="#0a7f2e")
+        try:
+            ImageAnnotator(self.app, p, str(SHOT_TMP), done)
+        except Exception as e:
+            log.warning("no se pudo abrir el editor de marcado: %s", e)
 
     def _grab_screen(self, png) -> bool:
         """Captura la pantalla (quitando este diálogo de la foto) en `png`.

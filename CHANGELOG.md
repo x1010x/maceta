@@ -3,6 +3,13 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.78 — 2026-11-25
+
+- Al **adjuntar una imagen** en un reporte, se abre también el **pincel**
+  para marcarla (antes solo se podía marcar la captura automática). Así, si
+  haces la captura con Cmd+Shift+4 y la adjuntas, puedes señalar el problema
+  igualmente — sin necesitar el permiso de grabación de pantalla.
+
 ## 0.4.77 — 2026-11-25
 
 - **Marcar la captura con un pincel.** En «Reportar un problema», botón
