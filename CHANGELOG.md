@@ -3,6 +3,21 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.88 — 2026-11-25
+
+- **No sustituir a ciegas.** Antes de reemplazar un original, si el parecido
+  con la descarga no es clarísimo, Maceta te enseña **cuánto se parecen (un
+  %)** y puedes **reproducir las dos para comparar** y decidir. Si no, va a
+  Revisar (no sustituye).
+- **Exigencia configurable** (Opciones → Descargas → «Exigencia para
+  sustituir»): estricto (95%) / medio (90%) / flexible (82%) /
+  personalizado, con explicación de cada valor. Por debajo del umbral no
+  sustituye.
+- **«No preguntar por encima de»** (por defecto 95%): ajusta a partir de qué
+  parecido sustituye sola sin preguntar. A 1.00 pregunta siempre.
+- **Modo de escaneo** (Opciones → Análisis): *completo* (por defecto) o
+  *rápido* (30 s por canción) para bibliotecas enormes.
+
 ## 0.4.87 — 2026-11-25
 
 - **Seleccionar todas en Actividad Soulseek** (pedido por un usuario):

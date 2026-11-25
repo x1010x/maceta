@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.87"
+VERSION = "0.4.88"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -466,6 +466,15 @@ USER_STATE_DEFAULTS = {
     "exact_match_ratio":          0.95,
     "plausible_name_ratio":       0.70,
     "audio_match_threshold":      0.85,
+    # Exigencia para sustituir/archivar: cuánto debe parecerse la descarga
+    # al original para darla por la misma canción. estricto/medio/flexible
+    # fijan el umbral; "personalizado" usa fp_match_threshold a mano.
+    "sub_strictness":             "medio",
+    "fp_match_threshold":         0.90,
+    "scan_mode":                  "completo",   # completo | rapido (30s)
+    # Por encima de este parecido, sustituye sin preguntar. Entre el umbral
+    # de "misma canción" y este, te enseña el % y decides.
+    "sub_auto_confirm":           0.95,
     "max_auto_requery":           3,
     "auto_substitute":            True,
     # Si una descarga sigue siendo FAKE/mala, bajar sola la siguiente
@@ -1947,6 +1956,17 @@ def exact_responses(responses: list, query: str,
     return out
 
 
+# Presets de exigencia para sustituir: (umbral huella, umbral cromagrama).
+# Más alto = Maceta tiene que estar MÁS segura de que es la misma canción
+# antes de reemplazar el original (y archivarlo). Evita cambiar una canción
+# por otra que no es.
+STRICTNESS_PRESETS = {
+    "estricto": (0.95, 0.92),
+    "medio":    (0.90, 0.85),
+    "flexible": (0.82, 0.78),
+}
+
+
 def apply_tunables(state: dict = None) -> None:
     """Vuelca los ajustes del usuario sobre las constantes del módulo.
 
@@ -1956,6 +1976,7 @@ def apply_tunables(state: dict = None) -> None:
     global GOOD_MP3_MIN_BR, OPPORTUNISTIC_FLOOR, MAX_FILE_SIZE_MB
     global FAKE_CUTOFF_FLOOR_HZ, CUTOFF_THRESHOLD_DB, ANALYSIS_MAX_SECONDS
     global EXACT_MATCH_RATIO, PLAUSIBLE_NAME_RATIO, AUDIO_MATCH_THRESHOLD
+    global FP_MATCH_THRESHOLD
     st = load_user_state() if state is None else state
 
     def _n(key, cast, lo, hi):
@@ -1974,6 +1995,15 @@ def apply_tunables(state: dict = None) -> None:
     EXACT_MATCH_RATIO    = _n("exact_match_ratio",    float,  0.5, 1.0)
     PLAUSIBLE_NAME_RATIO = _n("plausible_name_ratio", float,  0.0, 1.0)
     AUDIO_MATCH_THRESHOLD = _n("audio_match_threshold", float, 0.3, 1.0)
+    # Exigencia para sustituir: preset o personalizado.
+    _lvl = st.get("sub_strictness", "medio")
+    if _lvl in STRICTNESS_PRESETS:
+        FP_MATCH_THRESHOLD, AUDIO_MATCH_THRESHOLD = STRICTNESS_PRESETS[_lvl]
+    else:
+        FP_MATCH_THRESHOLD = _n("fp_match_threshold", float, 0.5, 1.0)
+    # Escaneo rápido: recorta el audio analizado a 30 s.
+    if str(st.get("scan_mode", "completo")) == "rapido":
+        ANALYSIS_MAX_SECONDS = 30.0
 
 
 # Palabras que no distinguen una canción de otra y solo sirven para que
@@ -3295,6 +3325,81 @@ class ImageAnnotator(tk.Toplevel):
         self._finish()
 
 
+class SubstituteConfirmDialog(tk.Toplevel):
+    """Antes de sustituir a ciegas: enseña cuánto se parecen el original y
+    la descarga (un %) para que el usuario decida. Permite reproducir ambas
+    para comparar a oído."""
+
+    def __init__(self, app, row, downloaded_path, sim, reason, quality):
+        super().__init__(app)
+        self.app = app
+        self.result = "skip"
+        self.title("¿Es la misma canción?")
+        self.geometry("560x340")
+        self.transient(app)
+        self.lift()
+        self.focus_force()
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+        pct = max(0, min(100, int(round(sim * 100))))
+        color = ("#0a7f2e" if pct >= 95 else
+                 "#b07a00" if pct >= 85 else "#b0261f")
+        top = ttk.Frame(self, padding=(16, 14, 16, 4))
+        top.pack(fill=tk.X)
+        tk.Label(top, text=f"{pct}%", font=("TkDefaultFont", 34, "bold"),
+                 fg=color).pack(side=tk.LEFT)
+        ttk.Label(top, justify="left", wraplength=400,
+                  text=f"de parecido entre el original y la descarga "
+                       f"({reason}).\nCalidad de la descarga: {quality}.\n"
+                       "Comprueba que es la misma canción antes de "
+                       "reemplazar.").pack(side=tk.LEFT, padx=12)
+
+        body = ttk.Frame(self, padding=(16, 6))
+        body.pack(fill=tk.BOTH, expand=True)
+        orig = Path(row.get("path") or "")
+        dl = Path(downloaded_path)
+        ttk.Label(body, text="Original (se moverá a archivo/):",
+                  foreground="#888").pack(anchor="w")
+        o = ttk.Frame(body); o.pack(fill=tk.X, pady=(0, 8))
+        ttk.Button(o, text="▶", width=3,
+                   command=lambda: self.app.play_path(str(orig), orig.name)
+                   ).pack(side=tk.LEFT)
+        ttk.Label(o, text=orig.name, wraplength=440).pack(side=tk.LEFT, padx=8)
+        ttk.Label(body, text="Descarga (la nueva):",
+                  foreground="#888").pack(anchor="w")
+        d = ttk.Frame(body); d.pack(fill=tk.X)
+        ttk.Button(d, text="▶", width=3,
+                   command=lambda: self.app.play_path(str(dl), dl.name)
+                   ).pack(side=tk.LEFT)
+        ttk.Label(d, text=dl.name, wraplength=440).pack(side=tk.LEFT, padx=8)
+
+        btns = ttk.Frame(self, padding=(16, 8, 16, 14))
+        btns.pack(fill=tk.X)
+        ttk.Button(btns, text="✓ Sí, sustituir",
+                   command=self._yes).pack(side=tk.LEFT)
+        ttk.Button(btns, text="✗ No (dejar en Revisar)",
+                   command=self._no).pack(side=tk.LEFT, padx=8)
+
+    def _yes(self):
+        self.result = "sub"
+        try:
+            self.app.on_stop_playback()
+        except Exception:
+            pass
+        self.destroy()
+
+    def _no(self):
+        self.result = "skip"
+        try:
+            self.app.on_stop_playback()
+        except Exception:
+            pass
+        self.destroy()
+
+
 class ReportDialog(tk.Toplevel):
     """Formulario para que el usuario cuente un problema. Lo guarda en
     reportes.txt (texto plano, junto a maceta.py) con versión, parte de la
@@ -3920,6 +4025,14 @@ class MacetaApp(tk.Tk):
             value=us["plausible_name_ratio"])
         self.audio_match_threshold = tk.DoubleVar(
             value=us["audio_match_threshold"])
+        self.sub_strictness_var = tk.StringVar(
+            value=us.get("sub_strictness") or "medio")
+        self.fp_match_threshold_var = tk.DoubleVar(
+            value=us.get("fp_match_threshold") or 0.90)
+        self.scan_mode_var = tk.StringVar(
+            value=us.get("scan_mode") or "completo")
+        self.sub_auto_confirm_var = tk.DoubleVar(
+            value=us.get("sub_auto_confirm") or 0.95)
         self.max_auto_requery_var = tk.IntVar(value=us["max_auto_requery"])
         self.auto_substitute_var = tk.BooleanVar(value=us["auto_substitute"])
         self.auto_escalate_var = tk.BooleanVar(
@@ -4916,6 +5029,10 @@ class MacetaApp(tk.Tk):
             "exact_match_ratio":        float(self._num(self.exact_match_ratio, 0.95)),
             "plausible_name_ratio":     float(self._num(self.plausible_name_ratio, 0.70)),
             "audio_match_threshold":    float(self._num(self.audio_match_threshold, 0.85)),
+            "sub_strictness":           self.sub_strictness_var.get() or "medio",
+            "fp_match_threshold":       float(self._num(self.fp_match_threshold_var, 0.90)),
+            "scan_mode":                self.scan_mode_var.get() or "completo",
+            "sub_auto_confirm":         float(self._num(self.sub_auto_confirm_var, 0.95)),
             "max_auto_requery":         int(self._num(self.max_auto_requery_var, 3)),
             "auto_substitute":          bool(self.auto_substitute_var.get()),
             "auto_escalate_fake":       bool(self.auto_escalate_var.get()),
@@ -7369,6 +7486,30 @@ class MacetaApp(tk.Tk):
                        f"✗ calidad baja ({q_reason})")
             self.after(0, self._release_active, orig_iid)
             return
+        # Si no está clarísimo (por debajo del umbral de auto-confirmación),
+        # enseñar el % y dejar que el usuario decida, en vez de sustituir
+        # a ciegas.
+        try:
+            auto = float(self.sub_auto_confirm_var.get())
+        except Exception:
+            auto = 0.95
+        if sim < auto:
+            box = {}
+            def _ask():
+                dlg = SubstituteConfirmDialog(
+                    self, row, local_path, sim, reason, q_reason)
+                self.wait_window(dlg)
+                box["r"] = dlg.result
+            self.after(0, _ask)
+            while "r" not in box:
+                time.sleep(0.1)
+            if box["r"] != "sub":
+                self._escalation.pop(orig_iid, None)
+                self.after(0, self._set_slsk_status, orig_iid,
+                           f"⚠ revisar — {int(round(sim*100))}% "
+                           "(sin confirmar)")
+                self.after(0, self._release_active, orig_iid)
+                return
         try:
             new_path = substitute_file(row["path"], local_path)
         except Exception as e:
@@ -9642,6 +9783,21 @@ MACETA_MANUAL = [
         "de «Grabación de pantalla». También puedes adjuntar una imagen que "
         "ya tengas hecha.",
     ]),
+    ("🔎 Sustituir sin equivocarse", [
+        "Al bajar una versión mejor, Maceta comprueba que es la MISMA "
+        "canción antes de reemplazar el original (que se guarda en "
+        "archivo/). Si el parecido no es clarísimo, te enseña el % y te "
+        "deja reproducir las dos para comparar y decidir.",
+        "",
+        "En Opciones → Descargas ajustas «Exigencia para sustituir» "
+        "(estricto 95% / medio 90% / flexible 82% / personalizado) y «No "
+        "preguntar por encima de» (a partir de qué parecido sustituye sin "
+        "preguntar). Por debajo del umbral de «misma canción», la canción "
+        "va a Revisar en vez de sustituirse.",
+        "",
+        "En Opciones → Análisis, «Modo de escaneo»: completo (por defecto) "
+        "o rápido (30 s por canción) para bibliotecas muy grandes.",
+    ]),
     ("🧹 Limpiar duplicados", [
         "Menú → Biblioteca → «Limpiar duplicados…». Busca canciones "
         "repetidas en la carpeta que tengas cargada: idénticas (mismo "
@@ -10626,11 +10782,18 @@ OPTION_TABS = [
       "label": "Sensibilidad del corte (dB)",
       "hint": "Energía mínima respecto al pico para considerar que ahí "
               "todavía hay señal. Más negativo = detecta cortes más altos."},
+     {"src": "app", "key": "scan_mode", "kind": "choice",
+      "choices": ["completo", "rapido"],
+      "label": "Modo de escaneo",
+      "hint": "• completo (por defecto) = analiza bien cada canción "
+              "(usa el tiempo de abajo).\n"
+              "• rapido = solo 30 s por canción: mucho más veloz para "
+              "bibliotecas enormes, algo menos fiable para el BPM."},
      {"src": "app", "key": "analysis_max_seconds", "kind": "int",
       "min": 5, "max": 3600, "step": 30,
       "label": "Audio analizado por canción (s)",
-      "hint": "Cuánto se decodifica de cada fichero. Menos es más rápido "
-              "y menos fiable para el BPM."},
+      "hint": "Cuánto se decodifica de cada fichero en modo completo. "
+              "Menos es más rápido y menos fiable para el BPM."},
      {"src": "app", "key": "max_file_size_mb", "kind": "int",
       "min": 1, "max": 2000, "step": 10,
       "label": "Tamaño máximo de descarga (MB)",
@@ -10739,11 +10902,36 @@ OPTION_TABS = [
       "label": "Sustituir automático desde Descargas",
       "hint": "Usa el link guardado al bajar y, si no hay, compara el "
               "audio. Apagado, el botón pregunta siempre."},
+     {"src": "app", "key": "sub_strictness", "kind": "choice",
+      "choices": ["estricto", "medio", "flexible", "personalizado"],
+      "label": "Exigencia para sustituir",
+      "hint": "Cuánto debe parecerse la descarga al original para darla "
+              "por la MISMA canción y reemplazarla (el original va a "
+              "archivo/). Evita cambiar una canción por otra que no es.\n"
+              "• estricto = 95% (casi idénticas; muy seguro)\n"
+              "• medio = 90% (recomendado)\n"
+              "• flexible = 82% (tolerante, más riesgo)\n"
+              "• personalizado = usa el valor de abajo a mano.\n"
+              "Por debajo del umbral, la canción va a Revisar, no se "
+              "sustituye."},
+     {"src": "app", "key": "sub_auto_confirm", "kind": "float",
+      "min": 0.5, "max": 1.0, "step": 0.01,
+      "label": "No preguntar por encima de",
+      "hint": "Si el parecido llega a este %, Maceta sustituye sola sin "
+              "preguntar. Entre el umbral de «misma canción» y este, te "
+              "enseña el % y decides tú (0.95 = 95%). Ponlo a 1.00 para "
+              "que te pregunte SIEMPRE antes de sustituir."},
+     {"src": "app", "key": "fp_match_threshold", "kind": "float",
+      "min": 0.5, "max": 1.0, "step": 0.01,
+      "label": "Umbral huella (si personalizado)",
+      "hint": "Umbral de la huella acústica (Chromaprint) cuando la "
+              "exigencia está en «personalizado». Los presets de arriba lo "
+              "fijan solos."},
      {"src": "app", "key": "audio_match_threshold", "kind": "float",
       "min": 0.3, "max": 1.0, "step": 0.01,
-      "label": "Parecido de audio para sustituir",
-      "hint": "Similitud de cromagrama mínima para dar dos ficheros por "
-              "la misma canción. Más alto = más estricto."},
+      "label": "Parecido de audio (fallback)",
+      "hint": "Similitud de cromagrama cuando no hay huella Chromaprint "
+              "disponible. Más alto = más estricto."},
      {"kind": "action", "label": "Carpeta archivo/",
       "button": "🧹 Limpiar archivo…",
       "cmd": "clean_archive",
