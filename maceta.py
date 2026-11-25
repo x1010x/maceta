@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.72"
+VERSION = "0.4.73"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -1507,6 +1507,23 @@ def _slskd_error_hint() -> str:
             + f"\n\n(completo en {SLSKD_LOG})")
 
 
+def _ensure_slskd_dirs() -> None:
+    """slskd se niega a arrancar si la carpeta de incompletos no existe, y
+    'borrar todo' o la papelera se la pueden cargar. La recreamos siempre
+    antes de lanzarlo."""
+    bases = []
+    d = slskd_download_dir()
+    if d:
+        bases.append(Path(d))
+    bases.append(DOWNLOADS_DIR)
+    for base in bases:
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            (base / ".incomplete").mkdir(exist_ok=True)
+        except OSError:
+            pass
+
+
 def maybe_launch_helpers() -> tuple:
     """Lee la config y arranca slskd/SoulseekQt si están configurados
     y no vivos aún. slskd se arranca primero y se espera a que responda
@@ -1519,6 +1536,7 @@ def maybe_launch_helpers() -> tuple:
     url = (cfg.get("slskd_url") or "").strip()
     key = (cfg.get("slskd_api_key") or "").strip()
     if slskd_bin and Path(slskd_bin).exists() and url and key:
+        _ensure_slskd_dirs()
         if _slskd_alive(url, key):
             if _slskd_logged_in(url, key):
                 msgs.append("slskd ya estaba en marcha")
@@ -5611,6 +5629,9 @@ class MacetaApp(tk.Tk):
             # forzar (si algo quedó dentro, se respeta).
             dirs = [d for d in DOWNLOADS_DIR.rglob("*") if d.is_dir()]
             for d in sorted(dirs, key=lambda x: len(x.parts), reverse=True):
+                # .incomplete es sagrada: slskd no arranca si falta.
+                if d.name == ".incomplete" or d == DOWNLOADS_DIR:
+                    continue
                 try:
                     if not any(d.iterdir()):
                         d.rmdir()

@@ -3,6 +3,13 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.73
+
+- **Arreglo: slskd no arrancaba («Invalid configuration»).** Al «borrar
+  todo» las descargas se eliminaba también la carpeta `.incomplete` que
+  slskd necesita, y entonces slskd se negaba a arrancar. Ahora esa carpeta
+  nunca se borra, y Maceta la recrea siempre antes de lanzar slskd.
+
 ## 0.4.72
 
 - **Limpiar duplicados** (Menú → Biblioteca → «🧹 Limpiar duplicados…»).
