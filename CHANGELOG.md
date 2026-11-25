@@ -3,6 +3,18 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.91 — 2026-11-25
+
+- **Para de bajar cuando queda poco disco.** Nuevo ajuste *Opciones →
+  Descargas → «Parar de bajar con menos de (GB)»* (por defecto **5 GB**,
+  0 = sin límite). Cuando el disco baja de ahí, Maceta deja de bajar y te
+  avisa; liberas espacio y vuelves a buscar para reanudar. Tampoco encadena
+  más versiones (escalada) si queda poco sitio.
+- Recordatorio de lo reciente que quizá no viste: **espacio libre** abajo a
+  la derecha (rojo < 10 GB), **confirmación con %** antes de sustituir y
+  **exigencia** configurable (estricto/medio/flexible), **modo de escaneo**
+  rápido/completo, y los **colores** de carpetas y de Actividad editables.
+
 ## 0.4.90 — 2026-11-25
 
 - **Espacio libre en la barra de abajo**: muestra los GB libres del disco de

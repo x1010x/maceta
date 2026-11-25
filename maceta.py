@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.90"
+VERSION = "0.4.91"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -475,6 +475,8 @@ USER_STATE_DEFAULTS = {
     # Por encima de este parecido, sustituye sin preguntar. Entre el umbral
     # de "misma canción" y este, te enseña el % y decides.
     "sub_auto_confirm":           0.95,
+    # Para de bajar cuando queden menos de estos GB libres (0 = sin límite).
+    "min_free_gb":                5.0,
     "max_auto_requery":           3,
     "auto_substitute":            True,
     # Si una descarga sigue siendo FAKE/mala, bajar sola la siguiente
@@ -4033,6 +4035,8 @@ class MacetaApp(tk.Tk):
             value=us.get("scan_mode") or "completo")
         self.sub_auto_confirm_var = tk.DoubleVar(
             value=us.get("sub_auto_confirm") or 0.95)
+        self.min_free_gb_var = tk.DoubleVar(
+            value=us.get("min_free_gb", 5.0))
         self.max_auto_requery_var = tk.IntVar(value=us["max_auto_requery"])
         self.auto_substitute_var = tk.BooleanVar(value=us["auto_substitute"])
         self.auto_escalate_var = tk.BooleanVar(
@@ -5036,6 +5040,7 @@ class MacetaApp(tk.Tk):
             "fp_match_threshold":       float(self._num(self.fp_match_threshold_var, 0.90)),
             "scan_mode":                self.scan_mode_var.get() or "completo",
             "sub_auto_confirm":         float(self._num(self.sub_auto_confirm_var, 0.95)),
+            "min_free_gb":              float(self._num(self.min_free_gb_var, 5.0)),
             "max_auto_requery":         int(self._num(self.max_auto_requery_var, 3)),
             "auto_substitute":          bool(self.auto_substitute_var.get()),
             "auto_escalate_fake":       bool(self.auto_escalate_var.get()),
@@ -7071,6 +7076,26 @@ class MacetaApp(tk.Tk):
             self.after(30_000, self._auto_retry_tick)
 
     DISK_LOW_GB = 10.0   # por debajo de esto, aviso en rojo
+
+    def _free_gb(self):
+        try:
+            base = self.folder.get() or str(MACETA_ROOT)
+            if not os.path.isdir(base):
+                base = str(Path.home())
+            return shutil.disk_usage(base).free / (1024 ** 3)
+        except Exception:
+            return None
+
+    def _disk_ok(self):
+        """(hay_sitio, gb_libres). Si no se puede medir, no bloquea."""
+        free = self._free_gb()
+        if free is None:
+            return True, None
+        try:
+            ming = float(self.min_free_gb_var.get())
+        except Exception:
+            ming = 5.0
+        return (ming <= 0 or free >= ming), free
 
     def _update_disk_space(self):
         """Muestra el espacio libre del disco de tu música; rojo si queda
@@ -9481,6 +9506,20 @@ class MacetaApp(tk.Tk):
     def _search_queue_worker(self, client):
         procesadas = 0
         while self._search_queue:
+            ok_disk, free = self._disk_ok()
+            if not ok_disk:
+                # Sin espacio: paramos sin perder la cola. Se reanuda
+                # cuando liberes disco y vuelvas a buscar.
+                self.after(0, self.status.set,
+                           f"⛔ Parado: quedan {free:.1f} GB libres "
+                           "(baja el mínimo en Opciones o libera disco)")
+                self.after(0, messagebox.showwarning, "Maceta",
+                           f"Paro de bajar: quedan {free:.1f} GB libres y el "
+                           "mínimo está en "
+                           f"{self.min_free_gb_var.get():.0f} GB.\n\n"
+                           "Libera espacio (o baja el mínimo en Opciones) y "
+                           "vuelve a darle a buscar para reanudar.")
+                break
             iid, row, custom_query, allow_picker = self._search_queue.pop(0)
             if iid not in self.active_by_iid:   # cancelada mientras esperaba
                 continue
@@ -9634,6 +9673,9 @@ class MacetaApp(tk.Tk):
                 self.active_by_iid[link_iid] = "descargando"
                 self.finalized_dl_keys.discard(key)
             return True, f"ya en descargas: {existing.name}"
+        ok_disk, free = self._disk_ok()
+        if not ok_disk:
+            return False, f"⛔ sin espacio ({free:.1f} GB libres)"
         tag = self._enqueue_pick(client, link_iid, resp, f, query, n)
         if (link_iid and link_iid in self.rows_by_iid
                 and self.auto_escalate_var.get()):
@@ -9681,6 +9723,8 @@ class MacetaApp(tk.Tk):
         """La descarga salió FAKE/mala: baja la siguiente mejor versión de
         la misma búsqueda. True si lanzó otra, False si no quedan."""
         if not self.auto_escalate_var.get():
+            return False
+        if not self._disk_ok()[0]:
             return False
         plan = self._escalation.get(orig_iid)
         if not plan:
@@ -10950,6 +10994,13 @@ OPTION_TABS = [
               "preguntar. Entre el umbral de «misma canción» y este, te "
               "enseña el % y decides tú (0.95 = 95%). Ponlo a 1.00 para "
               "que te pregunte SIEMPRE antes de sustituir."},
+     {"src": "app", "key": "min_free_gb_var", "kind": "float",
+      "min": 0.0, "max": 500.0, "step": 1.0,
+      "label": "Parar de bajar con menos de (GB)",
+      "hint": "Cuando queden menos de estos GB libres en el disco, Maceta "
+              "deja de bajar para no dejarte sin sitio (0 = sin límite). "
+              "Liberas espacio y vuelves a buscar para reanudar. El espacio "
+              "libre se ve abajo a la derecha (rojo si < 10 GB)."},
      {"src": "app", "key": "fp_match_threshold_var", "kind": "float",
       "min": 0.5, "max": 1.0, "step": 0.01,
       "label": "Umbral huella (si personalizado)",
