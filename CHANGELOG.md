@@ -3,6 +3,16 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.72
+
+- **Limpiar duplicados** (Menú → Biblioteca → «🧹 Limpiar duplicados…»).
+  Busca en la biblioteca cargada las canciones repetidas: idénticas (mismo
+  contenido, aunque tengan distinto nombre) y la misma canción en distinta
+  calidad (confirmado por huella Chromaprint). Agrupa cada canción, marca
+  la **mejor para mantener** (lossless > 320 > menos, nunca un FAKE) y deja
+  las sobrantes seleccionadas para **enviar a la papelera** (nunca borra: va
+  a la papelera y es recuperable). Te dice cuántos MB recuperas.
+
 ## 0.4.71
 
 - **El chip «⚠ Revisar» ahora es global** y junta TODO lo que está por

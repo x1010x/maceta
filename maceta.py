@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.71"
+VERSION = "0.4.72"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3034,6 +3034,256 @@ def spotify_fetch_tracks(url: str, timeout: float = 15.0) -> list:
     return tracks
 
 
+def dup_norm_key(name: str) -> str:
+    """Clave para agrupar posibles duplicados: tokens alfanuméricos del
+    nombre (sin extensión), ordenados. 'A - B.mp3' y 'B - A.flac' → igual."""
+    stem = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", name or "")
+    toks = sorted(w for w in re.findall(r"[a-z0-9]+", stem.lower())
+                  if len(w) > 1)
+    return " ".join(toks)
+
+
+def dup_master_key(it: dict) -> tuple:
+    """Para elegir cuál mantener de un grupo (mayor = mejor): nunca un FAKE
+    sobre uno bueno, luego lossless > MP3, luego bitrate, corte y tamaño."""
+    codec = (it.get("codec") or "").upper()
+    codec_rank = 3 if codec in ("FLAC", "WAV") else (1 if codec == "MP3"
+                                                     else 0)
+    non_fake = 0 if it.get("verdict") == "FAKE" else 1
+    return (non_fake, codec_rank, it.get("bitrate_kbps") or 0,
+            it.get("cutoff_hz") or 0, it.get("_size") or 0)
+
+
+def group_duplicates(items: list, hash_fn, fp_match_fn=None) -> list:
+    """Agrupa `items` (dicts con 'path' y 'name') que son la misma canción.
+
+    - Idénticos por contenido (hash_fn) → mismo grupo, aunque el nombre
+      difiera.
+    - Mismo nombre normalizado → mismo grupo, confirmado por huella
+      (fp_match_fn) cuando está disponible; si fp_match_fn devuelve None
+      para un par (sin fpcalc), se agrupa por nombre sin confirmar.
+
+    Devuelve lista de grupos (listas de items) de tamaño ≥ 2.
+    hash_fn(path)->str; fp_match_fn(a,b)->(match,sim,motivo)|None.
+    """
+    n = len(items)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    by_hash = {}
+    for i, it in enumerate(items):
+        h = hash_fn(it.get("path") or "")
+        if h:
+            by_hash.setdefault(h, []).append(i)
+    for idxs in by_hash.values():
+        for j in idxs[1:]:
+            union(idxs[0], j)
+
+    by_name = {}
+    for i, it in enumerate(items):
+        k = dup_norm_key(it.get("name") or "")
+        if k:
+            by_name.setdefault(k, []).append(i)
+    for idxs in by_name.values():
+        if len(idxs) < 2:
+            continue
+        for a in range(len(idxs)):
+            for b in range(a + 1, len(idxs)):
+                if find(idxs[a]) == find(idxs[b]):
+                    continue
+                if fp_match_fn is None:
+                    union(idxs[a], idxs[b])
+                    continue
+                r = fp_match_fn(items[idxs[a]].get("path") or "",
+                                items[idxs[b]].get("path") or "")
+                if r is None or r[0]:   # sin fpcalc → confiar en el nombre
+                    union(idxs[a], idxs[b])
+
+    comps = {}
+    for i in range(n):
+        comps.setdefault(find(i), []).append(items[i])
+    return [g for g in comps.values() if len(g) >= 2]
+
+
+class DuplicatesDialog(tk.Toplevel):
+    """Busca duplicados en la biblioteca cargada y deja enviar las copias
+    sobrantes a la papelera. Nunca borra: usa to_trash. Siempre se queda la
+    mejor versión de cada grupo (lossless/320/mejor corte, nunca un FAKE)."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Limpiar duplicados")
+        self.geometry("860x580")
+        self.transient(app)
+        self._paths = {}          # iid hijo -> ruta
+        self._master_iids = set()
+
+        top = ttk.Frame(self, padding=(12, 10, 12, 2))
+        top.pack(fill=tk.X)
+        self.info = ttk.Label(top, foreground="#888",
+                              text="Buscando duplicados… (puede tardar)")
+        self.info.pack(side=tk.LEFT)
+
+        ttk.Label(self, padding=(12, 0, 12, 4), foreground="#888",
+                  wraplength=820, justify="left",
+                  text="Cada grupo es la misma canción repetida. Se mantiene "
+                       "la mejor (✓) y las sobrantes (✗) van marcadas para la "
+                       "papelera. Revisa, ajusta la selección y confirma. "
+                       "Nada se borra: todo va a la papelera.").pack(fill=tk.X)
+
+        wrap = ttk.Frame(self, padding=(12, 4))
+        wrap.pack(fill=tk.BOTH, expand=True)
+        self.tree = ttk.Treeview(wrap, columns=("info",),
+                                 selectmode="extended")
+        self.tree.heading("#0", text="Canción / fichero")
+        self.tree.heading("info", text="Calidad")
+        self.tree.column("#0", width=580)
+        self.tree.column("info", width=240, anchor="w")
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.tag_configure("keep", foreground="#0a7f2e")
+        self.tree.tag_configure("extra", foreground="#b0261f")
+        self.tree.tag_configure("group", foreground="#444")
+
+        btns = ttk.Frame(self, padding=(12, 4, 12, 12))
+        btns.pack(fill=tk.X)
+        self.trash_btn = ttk.Button(
+            btns, text="🗑 Enviar sobrantes seleccionados a la papelera",
+            command=self._trash, state=tk.DISABLED)
+        self.trash_btn.pack(side=tk.LEFT)
+        ttk.Button(btns, text="Cerrar",
+                   command=self.destroy).pack(side=tk.RIGHT)
+        threading.Thread(target=self._scan, daemon=True).start()
+
+    @staticmethod
+    def _qual(it):
+        codec = (it.get("codec") or "?").upper()
+        br = it.get("bitrate_kbps")
+        parts = [codec if codec in ("FLAC", "WAV") else
+                 (f"MP3 {br}k" if br else "MP3")]
+        if it.get("verdict") == "FAKE":
+            parts.append("FAKE")
+        c = it.get("cutoff_hz")
+        if c:
+            parts.append(f"{c//1000}kHz")
+        mb = (it.get("_size") or 0) / 1024 / 1024
+        parts.append(f"{mb:.1f} MB")
+        return " · ".join(parts)
+
+    def _scan(self):
+        items = []
+        for iid, row in list(self.app.rows_by_iid.items()):
+            if row.get("from_wishlist"):
+                continue
+            p = row.get("path") or ""
+            if not p or not Path(p).exists():
+                continue
+            try:
+                size = os.path.getsize(p)
+            except OSError:
+                size = 0
+            items.append({
+                "path": p, "name": row.get("name") or Path(p).name,
+                "codec": row.get("codec"),
+                "bitrate_kbps": row.get("bitrate_kbps"),
+                "verdict": row.get("verdict"),
+                "cutoff_hz": row.get("cutoff_hz"), "_size": size,
+            })
+        groups = group_duplicates(items, audio_hash, songs_match_fingerprint)
+        self.app.after(0, self._show, groups)
+
+    def _show(self, groups):
+        self.tree.delete(*self.tree.get_children())
+        self._paths.clear()
+        self._master_iids.clear()
+        groups.sort(key=lambda g: -sum(i.get("_size") or 0 for i in g))
+        sobrantes = 0
+        recup = 0
+        presel = []
+        for gi, g in enumerate(groups):
+            master = max(g, key=dup_master_key)
+            rest = sorted((x for x in g if x is not master),
+                          key=dup_master_key, reverse=True)
+            cab = self.tree.insert(
+                "", tk.END, open=True, tags=("group",),
+                text=f"🎵 {master['name']}  ({len(g)} copias)",
+                values=("se mantiene la mejor",))
+            km = self.tree.insert(
+                cab, tk.END, text=f"   ✓ MANTENER  {Path(master['path']).name}",
+                values=(self._qual(master),), tags=("keep",))
+            self._paths[km] = master["path"]
+            self._master_iids.add(km)
+            for x in rest:
+                ex = self.tree.insert(
+                    cab, tk.END,
+                    text=f"   ✗ sobra  {Path(x['path']).name}",
+                    values=(self._qual(x),), tags=("extra",))
+                self._paths[ex] = x["path"]
+                presel.append(ex)
+                sobrantes += 1
+                recup += x.get("_size") or 0
+        if presel:
+            self.tree.selection_set(presel)
+        mb = recup / 1024 / 1024
+        if groups:
+            self.info.configure(
+                text=f"{len(groups)} grupos · {sobrantes} copias sobrantes · "
+                     f"~{mb:.0f} MB recuperables")
+            self.trash_btn.configure(state=tk.NORMAL)
+        else:
+            self.info.configure(text="No se han encontrado duplicados. 🎉")
+
+    def _trash(self):
+        sel = [i for i in self.tree.selection()
+               if i in self._paths and i not in self._master_iids]
+        if not sel:
+            self.info.configure(
+                text="Selecciona las copias sobrantes a enviar a la papelera.")
+            return
+        if not messagebox.askyesno(
+            "Maceta",
+            f"Enviar {len(sel)} copia(s) a la papelera?\n\n"
+            "Se mantiene siempre la mejor de cada grupo. Nada se borra del "
+            "disco: todo va a la papelera y es recuperable."):
+            return
+        done = fail = 0
+        for iid in sel:
+            p = self._paths.get(iid)
+            if not p:
+                continue
+            if to_trash(p):
+                done += 1
+                liid = self.app._iid_for_path(p)
+                if liid:
+                    if self.app.tree.exists(liid):
+                        self.app.tree.delete(liid)
+                    self.app.rows_by_iid.pop(liid, None)
+                if self.tree.exists(iid):
+                    self.tree.delete(iid)
+                self._paths.pop(iid, None)
+            else:
+                fail += 1
+        self.app._schedule_filter_refresh()
+        self.app._schedule_folder_refresh()
+        msg = f"✓ {done} enviadas a la papelera"
+        if fail:
+            msg += f" · {fail} con error"
+        self.info.configure(text=msg)
+
+
 class SpotifyImportDialog(tk.Toplevel):
     """Pega enlaces de Spotify (playlist/álbum/canción) y mete sus temas en
     la cola de búsqueda de Soulseek — como una lista de deseos: se bajan a
@@ -3663,6 +3913,9 @@ class MacetaApp(tk.Tk):
                           command=self.on_manual_substitute)
         m_bib.add_command(label="Borrar (a archivo/)",
                           accelerator="⌫", command=self.on_delete_selected)
+        m_bib.add_separator()
+        m_bib.add_command(label="🧹 Limpiar duplicados…",
+                          command=self.on_find_duplicates)
         m_bib.add_separator()
         m_bib.add_command(label="Vaciar lista",
                           command=self.on_clear_library)
@@ -8186,6 +8439,14 @@ class MacetaApp(tk.Tk):
                 idx.append((toks, name))
         return idx
 
+    def on_find_duplicates(self):
+        if not self.rows_by_iid:
+            messagebox.showinfo(
+                "Maceta", "Carga una carpeta primero (sus canciones son las "
+                "que se comparan para buscar duplicados).")
+            return
+        DuplicatesDialog(self)
+
     def on_spotify_import(self):
         if self._slsk_client() is None:
             messagebox.showwarning(
@@ -8806,6 +9067,18 @@ MACETA_MANUAL = [
         "• Estadísticas — números de tu colección, con cosas curiosas.",
         "• 🎧 Wishlist — temas que quieres conseguir (p. ej. de una "
         "playlist de Spotify), con su estado de descarga.",
+    ]),
+    ("🧹 Limpiar duplicados", [
+        "Menú → Biblioteca → «Limpiar duplicados…». Busca canciones "
+        "repetidas en la carpeta que tengas cargada: idénticas (mismo "
+        "contenido aunque cambie el nombre) y la misma canción en distinta "
+        "calidad (lo confirma con la huella Chromaprint).",
+        "",
+        "Cada grupo muestra la mejor marcada con ✓ MANTENER (lossless > 320 "
+        "> menos, y nunca se queda un FAKE si hay algo mejor) y las "
+        "sobrantes con ✗, ya seleccionadas. Revisa, ajusta la selección si "
+        "quieres y pulsa «Enviar sobrantes a la papelera». Como siempre, no "
+        "se borra nada: va a la papelera y se puede recuperar.",
     ]),
     ("🎧 Wishlist: importar de Spotify", [
         "Pega el enlace de una playlist, álbum o canción de Spotify y "
