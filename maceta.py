@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.85"
+VERSION = "0.4.86"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2744,6 +2744,12 @@ COLOR_SPEC = [
     ("verdict_PENDING",    "Fila sin analizar",    "#333333"),
     ("now_playing_fg",     "Now playing (texto)",  "#333333"),
     ("status_fg",          "Barra de estado (texto)", "#000000"),
+    # --- Soulseek: colores de las filas de búsqueda en Actividad ---
+    ("act_pendiente",  "Soulseek — búsqueda con resultado", "#2aa6c0"),
+    ("act_nores",      "Soulseek — búsqueda sin nada",      "#d04a3f"),
+    ("act_filtered",   "Soulseek — búsqueda filtrada",      "#c9890a"),
+    ("act_done",       "Soulseek — ya descargada",          "#1a7f37"),
+    ("act_related_bg", "Soulseek — relacionada (fondo)",    "#2d3b1f"),
 ]
 
 
@@ -3995,7 +4001,7 @@ class MacetaApp(tk.Tk):
         self._apply_ui_font()
         self.after(300, self._restore_layout)
         self.after(600, self._show_whats_new_if_updated)
-        self.after(900, self._restore_last_folder)
+        self.after(250, self._restore_last_folder)
         self.after(1500, self._startup_update_check)
         # NOTA: en v0.4.3 se retiró el poller que insertaba los ficheros
         # de DOWNLOADS_DIR en Biblioteca. Los descargados solo se ven en
@@ -5676,18 +5682,7 @@ class MacetaApp(tk.Tk):
             selectmode="extended", height=6,
         )
         s_wrap.pack(fill=tk.BOTH, expand=True)
-        # Rojo: nadie respondió. Ámbar: respondieron pero tus filtros
-        # dejan fuera todo lo que ofrecen.
-        self.search_tree.tag_configure("nores", foreground="#d04a3f")
-        self.search_tree.tag_configure("filtered", foreground="#c9890a")
-        self.search_tree.tag_configure("done", foreground="#1a7f37")
-        # Completada, con resultados aceptables, pero aún no has bajado
-        # ninguna: hay cosa que elegir aquí. Cian para que no se confunda
-        # con las que siguen en curso (negro).
-        self.search_tree.tag_configure("pendiente", foreground="#2aa6c0")
-        # Fondo para resaltar las rebúsquedas del mismo tema que la
-        # seleccionada (variantes que se han ido probando).
-        self.search_tree.tag_configure("related", background="#2d3b1f")
+        self._apply_search_tree_colors()
         self._search_usable = {}
         # #N que ya han terminado de bajar. Se acumula y no se vacía:
         # limpiar la lista de descargas de slskd no debe perder el verde.
@@ -6391,6 +6386,22 @@ class MacetaApp(tk.Tk):
         except Exception:
             pass
 
+    def _apply_search_tree_colors(self):
+        """Colores de las filas de búsqueda en Actividad, configurables
+        desde el editor de Colores."""
+        t = getattr(self, "search_tree", None)
+        if t is None:
+            return
+        c = self.colors
+        t.tag_configure("nores", foreground=c.get("act_nores", "#d04a3f"))
+        t.tag_configure("filtered",
+                        foreground=c.get("act_filtered", "#c9890a"))
+        t.tag_configure("done", foreground=c.get("act_done", "#1a7f37"))
+        t.tag_configure("pendiente",
+                        foreground=c.get("act_pendiente", "#2aa6c0"))
+        t.tag_configure("related",
+                        background=c.get("act_related_bg", "#2d3b1f"))
+
     def _apply_colors(self):
         c = self.colors
         # Banner
@@ -6419,6 +6430,7 @@ class MacetaApp(tk.Tk):
                       foreground=[("selected", c["tree_selected_fg"])])
         except Exception:
             pass
+        self._apply_search_tree_colors()
         # Tags de veredicto en el tree principal
         for verdict, key in [("OK", "verdict_OK"),
                              ("LOSSLESS", "verdict_LOSSLESS"),
@@ -9124,6 +9136,8 @@ class MacetaApp(tk.Tk):
                     self.on_wish_remove, side=tk.LEFT, padx=(10, 0))
         icon_button(bar, "🧹", "Quitar de la lista los ya descargados",
                     self.on_wish_clear_done, side=tk.LEFT)
+        icon_button(bar, "📂", "Abrir la carpeta donde se bajan",
+                    self.on_wish_open_folder, side=tk.LEFT, padx=(10, 0))
         self.wish_count = ttk.Label(bar, text="", foreground="#888")
         self.wish_count.pack(side=tk.RIGHT)
 
@@ -9131,7 +9145,9 @@ class MacetaApp(tk.Tk):
                   wraplength=900, justify="left",
                   text="Temas que quieres conseguir (importados de Spotify). "
                        "Maceta los busca en Soulseek y los baja a la carpeta "
-                       "de descargas. La lista se guarda entre sesiones.").pack(
+                       "de descargas (botón 📂, o doble clic en un tema "
+                       "descargado para abrirlo). La lista se guarda entre "
+                       "sesiones.").pack(
             fill=tk.X)
 
         wrap = ttk.Frame(parent, padding=(8, 4))
@@ -9149,6 +9165,7 @@ class MacetaApp(tk.Tk):
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         for st, col in WISH_COLORS.items():
             self.wish_tree.tag_configure(st, foreground=col)
+        self.wish_tree.bind("<Double-1>", self._wish_open_selected)
         self._refresh_wishlist_tree()
 
     def _update_wish_count(self):
@@ -9209,6 +9226,25 @@ class MacetaApp(tk.Tk):
         save_wishlist(self.wishlist)
         self._refresh_wishlist_tree()
         self._wish_sync_review_rows()
+
+    def on_wish_open_folder(self):
+        """Abre la carpeta donde Maceta baja los temas de la Wishlist."""
+        try:
+            DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        self._reveal_path(DOWNLOADS_DIR)
+
+    def _wish_open_selected(self, _event=None):
+        """Doble clic en un tema: si está descargado, lo muestra en Finder;
+        si no, abre la carpeta de descargas."""
+        sel = self.wish_tree.selection()
+        it = self._wish_item(sel[0]) if sel else None
+        path = (it or {}).get("path") or ""
+        if path and Path(path).exists():
+            self._reveal_path(path)
+        else:
+            self.on_wish_open_folder()
 
     def on_wish_clear_done(self):
         antes = len(self.wishlist)

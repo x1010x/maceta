@@ -3,6 +3,16 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.86 — 2026-11-25
+
+- **Colores de Actividad Soulseek, ahora editables** (pedido por un
+  usuario). El azul/cian de las búsquedas con resultado y los demás colores
+  de estado (sin resultados, filtrada, ya descargada, relacionada) salen en
+  *Preferencias → Colores* y se pueden cambiar al gusto.
+- **Wishlist: botón 📂 para abrir la carpeta** donde se bajan los temas, y
+  doble clic en un tema descargado para abrirlo en Finder.
+- Arranque: la biblioteca se restaura antes (menos rato con la lista vacía).
+
 ## 0.4.85 — 2026-11-25
 
 - **Filas más compactas y ajustables (pedido por un usuario).** Las tablas
