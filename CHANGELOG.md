@@ -3,6 +3,12 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.82 — 2026-11-25
+
+- La ventana para marcar la captura ahora se **ajusta al tamaño de tu
+  pantalla** (la imagen se ve más pequeña, ~60% de alto) para que quepan
+  siempre los botones de abajo.
+
 ## 0.4.81 — 2026-11-25
 
 - Captura de reportes (de verdad esta vez): el problema era que el fichero

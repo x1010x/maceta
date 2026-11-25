@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.81"
+VERSION = "0.4.82"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3158,7 +3158,12 @@ class ImageAnnotator(tk.Toplevel):
         self._Image, self._ImageDraw, self._ImageTk = Image, ImageDraw, ImageTk
 
         img = Image.open(image_path).convert("RGB")
-        maxw, maxh = 1200, 760
+        # Escalar para que la ventana (imagen + barra + botones) quepa en la
+        # pantalla, dejando hueco arriba y abajo. No hace falta 1:1.
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        maxw = max(480, int(sw * 0.82))
+        maxh = max(360, int(sh * 0.60))   # ~60% alto: deja sitio a botones
         scale = min(1.0, maxw / img.width, maxh / img.height)
         if scale < 1.0:
             img = img.resize((max(1, int(img.width * scale)),
