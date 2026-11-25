@@ -3,6 +3,12 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.79 — 2026-11-25
+
+- La captura de pantalla de los reportes ahora usa la ruta completa de
+  screencapture y muestra el error exacto si falla, con el recordatorio de
+  que hay que reabrir Maceta tras conceder el permiso de grabación.
+
 ## 0.4.78 — 2026-11-25
 
 - Al **adjuntar una imagen** en un reporte, se abre también el **pincel**

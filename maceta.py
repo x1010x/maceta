@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.78"
+VERSION = "0.4.79"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3417,12 +3417,21 @@ class ReportDialog(tk.Toplevel):
         macOS: screencapture · Windows: powershell · Linux: import."""
         png = Path(png)
         try:
+            png.unlink()
+        except OSError:
+            pass
+        err = ""
+        try:
             self.withdraw()
             self.app.update_idletasks()
-            time.sleep(0.4)
+            time.sleep(0.5)
             if sys.platform == "darwin":
-                subprocess.run(["screencapture", "-x", str(png)],
-                               timeout=15, check=False)
+                r = subprocess.run(
+                    ["/usr/sbin/screencapture", "-x", str(png)],
+                    capture_output=True, text=True, timeout=15, check=False)
+                err = (r.stderr or "").strip()
+                log.info("screencapture rc=%s stderr=%r exists=%s",
+                         r.returncode, err, png.exists())
             elif sys.platform == "win32":
                 subprocess.run(
                     ["powershell", "-NoProfile", "-Command",
@@ -3438,13 +3447,19 @@ class ReportDialog(tk.Toplevel):
                 subprocess.run(["import", "-window", "root", str(png)],
                                timeout=15, check=False)
         except Exception as e:
+            err = str(e)
             log.warning("screenshot falló: %s", e)
         finally:
             try:
                 self.deiconify()
             except Exception:
                 pass
-        return png.exists()
+        ok = png.exists() and png.stat().st_size > 0
+        self._last_grab_err = "" if ok else (
+            err or "screencapture no generó ninguna imagen")
+        if not ok:
+            log.warning("captura vacía: %s", self._last_grab_err)
+        return ok
 
     def _screenshot(self) -> str:
         ts = time.strftime("%Y%m%d-%H%M%S")
@@ -3453,13 +3468,15 @@ class ReportDialog(tk.Toplevel):
 
     def _capture_and_annotate(self):
         if not self._grab_screen(SHOT_TMP):
+            detalle = getattr(self, "_last_grab_err", "")
             messagebox.showwarning(
                 "Maceta",
-                "No se pudo capturar la pantalla.\n\nSi es la primera vez, "
-                "concede permiso de «Grabación de pantalla» en Ajustes del "
-                "Sistema → Privacidad y seguridad, y reinténtalo. También "
-                "puedes hacer la captura con Cmd+Shift+4 y usar «Adjuntar "
-                "imagen…».")
+                "No se pudo capturar la pantalla.\n\n"
+                "IMPORTANTE: tras conceder «Grabación de pantalla» hay que "
+                "CERRAR Maceta del todo y volver a abrirla (doble clic en "
+                "Maceta.app) para que el permiso tenga efecto.\n\n"
+                "Si aun así falla, usa Cmd+Shift+4 y «Adjuntar imagen…».\n\n"
+                + (f"(detalle técnico: {detalle})" if detalle else ""))
             return
 
         def done(saved):
