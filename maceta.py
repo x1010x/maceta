@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.96"
+VERSION = "0.4.97"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -10202,7 +10202,7 @@ class CompareDialog(tk.Toplevel):
         self.cand_path = str(cand_path)
         self.on_confirm = on_confirm
         self.title(f"Comparar — {Path(orig_path).name} ↔ {Path(cand_path).name}")
-        self.geometry("1180x680")
+        self.geometry("1180x900")
         self.transient(app)
 
         ttk.Label(
@@ -10235,6 +10235,32 @@ class CompareDialog(tk.Toplevel):
             body, 1, cand_label, self.cand_path, accent="#2a6",
             side_key="cand")
 
+        # --- Waveforms estilo VirtualDJ: las dos por separado y una
+        #     superpuesta (cada canción con su color) para ver de un
+        #     vistazo si coinciden en el tiempo ---
+        wave_box = ttk.LabelFrame(
+            self, text="Forma de onda (¿coinciden en el tiempo?)",
+            padding=(6, 2))
+        wave_box.pack(fill=tk.X, padx=8, pady=(0, 2))
+        self._wave_fig = Figure(figsize=(11, 2.7), dpi=90)
+        self._wave_fig.subplots_adjust(left=0.07, right=0.99, top=0.93,
+                                       bottom=0.08, hspace=0.45)
+        self._wave_axes = self._wave_fig.subplots(3, 1)
+        for ax in self._wave_axes:
+            ax.set_xlim(0, 1)
+            ax.set_xticks([])
+            ax.set_yticks([])
+        self._wave_axes[0].set_ylabel("Original", fontsize=8, color="#a33")
+        self._wave_axes[1].set_ylabel("Descarga", fontsize=8, color="#2a6")
+        self._wave_axes[2].set_ylabel("Juntas", fontsize=8)
+        self._wave_canvas = FigureCanvasTkAgg(self._wave_fig, master=wave_box)
+        self._wave_canvas.get_tk_widget().pack(fill=tk.X)
+        self._wave_data = {}
+        for side, path in (("orig", self.orig_path),
+                           ("cand", self.cand_path)):
+            threading.Thread(target=self._compute_waveform_thread,
+                             args=(side, path), daemon=True).start()
+
         btns = ttk.Frame(self, padding=10)
         btns.pack(fill=tk.X, side=tk.BOTTOM)
         ttk.Button(btns, text="Cancelar",
@@ -10254,6 +10280,64 @@ class CompareDialog(tk.Toplevel):
                 target=self._compute_spectrum_thread,
                 args=(side, path), daemon=True,
             ).start()
+
+    def _compute_waveform_thread(self, side, path):
+        try:
+            y, sr = librosa.load(path, sr=11025, mono=True)
+            if y.size < 1024:
+                raise ValueError("audio corto")
+            n_cols = 600
+            hop = max(1, y.size // n_cols)
+            S = np.abs(librosa.stft(y, n_fft=1024, hop_length=hop))
+            freqs = librosa.fft_frequencies(sr=sr, n_fft=1024)
+            low = S[freqs < 250].sum(axis=0)
+            mid = S[(freqs >= 250) & (freqs < 2500)].sum(axis=0)
+            high = S[freqs >= 2500].sum(axis=0)
+            amp = np.sqrt((S ** 2).sum(axis=0))
+            amp = amp / (amp.max() or 1.0)
+            bands = np.stack([low, mid, high], axis=1)
+            bands = bands / (bands.max() or 1.0)
+            bands = np.clip(bands * 1.6, 0, 1)
+            self.app.after(0, self._store_wave, side, amp, bands)
+        except Exception as e:
+            log.warning("waveform %s: %s", side, e)
+
+    def _store_wave(self, side, amp, bands):
+        self._wave_data[side] = (amp, bands)
+        if "orig" in self._wave_data and "cand" in self._wave_data:
+            self._render_waves()
+
+    def _render_waves(self):
+        if not self.winfo_exists():
+            return
+        import numpy as _np
+        axes = self._wave_axes
+        for ax in axes:
+            ax.clear()
+            ax.set_xlim(0, 1)
+            ax.set_ylim(-1.05, 1.05)
+            ax.set_xticks([]); ax.set_yticks([])
+        axes[0].set_ylabel("Original", fontsize=8, color="#a33")
+        axes[1].set_ylabel("Descarga", fontsize=8, color="#2a6")
+        axes[2].set_ylabel("Juntas", fontsize=8)
+        for ax, side in ((axes[0], "orig"), (axes[1], "cand")):
+            amp, bands = self._wave_data[side]
+            x = _np.linspace(0, 1, len(amp))
+            ax.vlines(x, -amp, amp, colors=bands, linewidth=1.0)
+        # superpuesta: contorno de cada una con su color
+        ao, _ = self._wave_data["orig"]
+        ac, _ = self._wave_data["cand"]
+        xo = _np.linspace(0, 1, len(ao))
+        xc = _np.linspace(0, 1, len(ac))
+        axes[2].fill_between(xo, 0, ao, color="#d0352b", alpha=0.45,
+                             linewidth=0)
+        axes[2].fill_between(xc, 0, -ac, color="#1f9e45", alpha=0.45,
+                             linewidth=0)
+        axes[2].axhline(0, color="#888", linewidth=0.5)
+        try:
+            self._wave_canvas.draw_idle()
+        except Exception:
+            pass
 
     def _compute_match(self):
         try:

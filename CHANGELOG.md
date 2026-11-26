@@ -3,6 +3,14 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.97 — 2026-11-26
+
+- **Forma de onda estilo VirtualDJ en la comparación.** Al confirmar una
+  sustitución, además de los espectros ahora ves la **forma de onda** de las
+  dos canciones (coloreada por graves/medios/agudos) y una tercera
+  **superpuesta** (original en rojo, descarga en verde) para ver de un
+  vistazo si coinciden en el tiempo — o sea, si son la misma.
+
 ## 0.4.96 — 2026-11-26
 
 - **Botones arriba en Actividad.** Los botones de cada panel (Búsquedas,
