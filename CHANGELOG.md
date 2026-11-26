@@ -3,6 +3,13 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.95 — 2026-11-26
+
+- **La cola de búsqueda ya no se pierde al cerrar.** Lo que tengas pendiente
+  de buscar se guarda en disco y, al reabrir Maceta (y cargar la biblioteca),
+  se reanuda solo donde lo dejaste. (Las de la Wishlist ya se guardaban en su
+  lista.)
+
 ## 0.4.94 — 2026-11-26
 
 - **% de parecido en la comparación de espectros.** El diálogo que enseña

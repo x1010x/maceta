@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.94"
+VERSION = "0.4.95"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -2953,6 +2953,7 @@ class AudioPlayer:
 
 
 WISHLIST_PATH = Path.home() / ".maceta_wishlist.json"
+QUEUE_PATH = Path.home() / ".maceta_queue.json"
 
 WISH_STATUS = {
     "pendiente":     "• pendiente",
@@ -6732,6 +6733,7 @@ class MacetaApp(tk.Tk):
     def _scan_done(self, n, cached=0):
         self.progress.set(0)
         self._wish_sync_review_rows()
+        self._restore_queue()
         self.status.set(
             f"{n} archivos listados" + (f" · {cached} ya analizados (índice)" if cached else "") + " — selecciona y pulsa Analizar "
             "(Cmd/Ctrl+A para todas)"
@@ -9163,6 +9165,7 @@ class MacetaApp(tk.Tk):
             self.active_by_iid[iid] = "buscando"
             self._set_slsk_status(iid, "⏳ en cola de búsqueda")
             self._search_queue.append((iid, row, custom_query, picker))
+        self._save_queue()
         self.status.set(
             f"{len(self._search_queue)} en cola de búsqueda…")
         self._refresh_activity_stats_soft()
@@ -9499,6 +9502,59 @@ class MacetaApp(tk.Tk):
         self._wish_sync_review_rows()
         self.status.set(f"Quitadas {quitados} buenas de la Wishlist.")
 
+    def _save_queue(self):
+        """Guarda en disco la cola de búsqueda pendiente (solo las de
+        biblioteca; las de la Wishlist ya se guardan en su lista) para no
+        perderla al cerrar el programa."""
+        data = []
+        for iid, row, cq, picker in self._search_queue:
+            if str(iid).startswith("wish:"):
+                continue
+            p = (row or {}).get("path")
+            if p:
+                data.append({"path": p, "query": cq,
+                             "picker": bool(picker)})
+        try:
+            QUEUE_PATH.write_text(json.dumps(data, ensure_ascii=False),
+                                  encoding="utf-8")
+        except Exception:
+            pass
+
+    def _restore_queue(self):
+        """Al arrancar (tras cargar la biblioteca), reanuda la cola de
+        búsqueda que había pendiente al cerrar."""
+        if getattr(self, "_queue_restored", False):
+            return
+        self._queue_restored = True
+        try:
+            data = json.loads(QUEUE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(data, list) or not data:
+            return
+        added = 0
+        for item in data:
+            p = item.get("path")
+            iid = self._iid_for_path(p) if p else None
+            if not iid or iid in self.active_by_iid:
+                continue
+            self.active_by_iid[iid] = "buscando"
+            self._set_slsk_status(iid, "⏳ en cola de búsqueda")
+            self._search_queue.append(
+                (iid, self.rows_by_iid[iid], item.get("query"),
+                 bool(item.get("picker"))))
+            added += 1
+        if not added:
+            return
+        self._batch_total += added
+        self._refresh_activity_stats_soft()
+        self.status.set(f"Reanudando {added} de la cola de búsqueda de antes…")
+        client = self._slsk_client()
+        if client is not None and not self._search_running:
+            self._search_running = True
+            threading.Thread(target=self._search_queue_worker,
+                             args=(client,), daemon=True).start()
+
     def cancel_search_queue(self, iids=None):
         """Quita canciones de la cola de búsqueda (las que aún no se han
         lanzado). iids=None → vaciar la cola entera. No cancela la que ya
@@ -9515,6 +9571,7 @@ class MacetaApp(tk.Tk):
             else:
                 resto.append(item)
         self._search_queue = resto
+        self._save_queue()
         self._refresh_activity_stats_soft()
         self.status.set(f"{n} quitada(s) de la cola de búsqueda")
         return n
@@ -9563,9 +9620,11 @@ class MacetaApp(tk.Tk):
                 self.after(0, self._wish_set_status, iid, "no_encontrado")
                 self.after(0, self._release_active, iid)
             procesadas += 1
+            self.after(0, self._save_queue)
             self.after(0, self._refresh_activity_stats_soft)
         self._search_running = False
         self._batch_total = 0
+        self.after(0, self._save_queue)
         self.after(0, self._slsk_batch_done, procesadas)
 
     def _acceptable_count(self, responses, min_br):
