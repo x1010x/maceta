@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.93"
+VERSION = "0.4.94"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -8694,6 +8694,12 @@ class MacetaApp(tk.Tk):
         self.bind("<Configure>", self._schedule_layout_save, add="+")
         self.notebook.bind("<<NotebookTabChanged>>",
                            self._on_tab_layout, add="+")
+        # Arrastrar un divisor redimensiona los paneles SIN redimensionar la
+        # ventana, así que <Configure> no salta: guardamos al soltar el ratón
+        # sobre cualquier PanedWindow.
+        for _pane in self._panes().values():
+            _pane.bind("<ButtonRelease-1>", self._schedule_layout_save,
+                       add="+")
 
     # ---------- Carpetas recientes ----------
 
@@ -10210,6 +10216,14 @@ class CompareDialog(tk.Toplevel):
             foreground="#555", padding=(10, 8),
         ).pack(fill=tk.X)
 
+        # Parecido automático (misma función que usa la sustitución): se
+        # calcula en segundo plano y se enseña arriba, para decidir con dato.
+        self.match_lbl = tk.Label(
+            self, text="⏳ calculando parecido…", fg="#888",
+            font=("TkDefaultFont", 13, "bold"), padx=10, pady=2)
+        self.match_lbl.pack(fill=tk.X)
+        threading.Thread(target=self._compute_match, daemon=True).start()
+
         body = ttk.Frame(self, padding=(8, 0, 8, 4))
         body.pack(fill=tk.BOTH, expand=True)
         body.columnconfigure(0, weight=1, uniform="pane")
@@ -10239,6 +10253,24 @@ class CompareDialog(tk.Toplevel):
                 target=self._compute_spectrum_thread,
                 args=(side, path), daemon=True,
             ).start()
+
+    def _compute_match(self):
+        try:
+            match, sim, reason = songs_match(self.orig_path, self.cand_path)
+        except Exception as e:
+            self.app.after(0, self._show_match, None, 0.0, str(e)[:40])
+            return
+        self.app.after(0, self._show_match, match, sim, reason)
+
+    def _show_match(self, match, sim, reason):
+        if not self.winfo_exists():
+            return
+        pct = max(0, min(100, int(round((sim or 0) * 100))))
+        col = ("#0a7f2e" if pct >= 95 else
+               "#b07a00" if pct >= 85 else "#b0261f")
+        aviso = "" if (match or pct >= 85) else "  — ¿seguro que es la misma?"
+        self.match_lbl.configure(
+            text=f"🎯 {pct}% de parecido ({reason}){aviso}", fg=col)
 
     def _make_side_panel(self, parent, col, label, path, accent,
                          side_key="x"):

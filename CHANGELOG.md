@@ -3,6 +3,15 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.94 — 2026-11-26
+
+- **% de parecido en la comparación de espectros.** El diálogo que enseña
+  los dos espectros (original vs candidata) ahora calcula y muestra arriba
+  el **% de parecido** automático, con color (verde/ámbar/rojo), para
+  decidir con dato.
+- **Arreglado: ahora sí recuerda el tamaño de los paneles.** Al arrastrar un
+  divisor (p. ej. agrandar Búsquedas) se guarda y se mantiene al reabrir.
+
 ## 0.4.93 — 2026-11-26
 
 - **Actividad Soulseek más espaciosa.** Quitados los títulos duplicados
