@@ -3,6 +3,17 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.99 — 2026-11-26
+
+- **Ventanas centradas.** Los popups (comparar, opciones, reportar, etc.)
+  salen centrados en la pantalla, no por las esquinas.
+- **Sin popups automáticos al sustituir.** Las sustituciones dudosas ya no
+  interrumpen con una ventana: se mandan a **Revisar** y las miras a mano
+  cuando quieras (ahí abres el comparador tú). Lo clarísimo (≥ el % que
+  pongas) se sustituye solo.
+- **Comparador más pequeño** para que quepa entero: dos formas de onda
+  (original y descarga) en vez de tres, y gráficas algo más bajas.
+
 ## 0.4.98 — 2026-11-26
 
 - **Arreglada la reanudación de la cola al reabrir.** Antes solo reanudaba

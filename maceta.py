@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.98"
+VERSION = "0.4.99"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -3188,6 +3188,19 @@ def group_duplicates(items: list, hash_fn, fp_match_fn=None) -> list:
     return [g for g in comps.values() if len(g) >= 2]
 
 
+def center_window(win, w, h):
+    """Coloca una ventana centrada en la pantalla (un poco por encima del
+    centro) con el tamaño dado."""
+    try:
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        x = max(0, (sw - w) // 2)
+        y = max(24, (sh - h) // 2 - 24)
+        win.geometry(f"{w}x{h}+{x}+{y}")
+    except Exception:
+        win.geometry(f"{w}x{h}")
+
+
 class ImageAnnotator(tk.Toplevel):
     """Editor mínimo para marcar una captura con un pincel (señalar el
     problema). Pinta trazos a mano alzada sobre la imagen y la guarda."""
@@ -3343,7 +3356,7 @@ class ReportDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Reportar un problema")
-        self.geometry("600x580")
+        center_window(self, 600, 580)
         self.transient(app)
         self.lift()
         self.focus_force()
@@ -3615,7 +3628,7 @@ class DuplicatesDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Limpiar duplicados")
-        self.geometry("860x580")
+        center_window(self, 860, 580)
         self.transient(app)
         self._paths = {}          # iid hijo -> ruta
         self._master_iids = set()
@@ -3784,7 +3797,7 @@ class SpotifyImportDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Importar de Spotify")
-        self.geometry("640x540")
+        center_window(self, 640, 540)
         self.transient(app)
         self._meta = []
 
@@ -7492,26 +7505,14 @@ class MacetaApp(tk.Tk):
             auto = 0.95
         keep_new = False
         if sim < auto:
-            box = {"r": "skip"}
-            def _ask():
-                dlg = CompareDialog(
-                    self, row["path"], local_path,
-                    on_confirm=lambda keep: box.update(r="sub", keep=keep),
-                    orig_label="Original (Biblioteca)",
-                    cand_label="Candidata (descarga)")
-                self.wait_window(dlg)
-                box["done"] = True
-            self.after(0, _ask)
-            while "done" not in box:
-                time.sleep(0.1)
-            keep_new = bool(box.get("keep", False))
-            if box.get("r") != "sub":
-                self._escalation.pop(orig_iid, None)
-                self.after(0, self._set_slsk_status, orig_iid,
-                           f"⚠ revisar — {int(round(sim*100))}% "
-                           "(sin confirmar)")
-                self.after(0, self._release_active, orig_iid)
-                return
+            # Dudosa: NO molestamos con un popup automático. Va a Revisar y
+            # el usuario la mira a mano cuando quiera (ahí abre el comparador
+            # él mismo y decide).
+            self._escalation.pop(orig_iid, None)
+            self.after(0, self._set_slsk_status, orig_iid,
+                       f"⚠ revisar — {int(round(sim * 100))}% (mira a mano)")
+            self.after(0, self._release_active, orig_iid)
+            return
         try:
             new_path = substitute_file(row["path"], local_path,
                                        keep_name=keep_new)
@@ -10109,7 +10110,7 @@ class ManualDialog(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
         self.title("Manual de Maceta")
-        self.geometry("720x620")
+        center_window(self, 720, 620)
         self.transient(master)
 
         top = ttk.Frame(self, padding=(12, 10, 12, 4))
@@ -10151,7 +10152,7 @@ class WhatsNewDialog(tk.Toplevel):
         super().__init__(master)
         self.title(f"Novedades — v{version}" if heading is None
                    else heading)
-        self.geometry("620x560")
+        center_window(self, 620, 560)
         self.transient(master)
 
         top = ttk.Frame(self, padding=(12, 12, 12, 0))
@@ -10217,7 +10218,7 @@ class CompareDialog(tk.Toplevel):
         self.cand_path = str(cand_path)
         self.on_confirm = on_confirm
         self.title(f"Comparar — {Path(orig_path).name} ↔ {Path(cand_path).name}")
-        self.geometry("1180x900")
+        center_window(self, 1160, 780)
         self.transient(app)
 
         ttk.Label(
@@ -10257,17 +10258,16 @@ class CompareDialog(tk.Toplevel):
             self, text="Forma de onda (¿coinciden en el tiempo?)",
             padding=(6, 2))
         wave_box.pack(fill=tk.X, padx=8, pady=(0, 2))
-        self._wave_fig = Figure(figsize=(11, 2.7), dpi=90)
-        self._wave_fig.subplots_adjust(left=0.07, right=0.99, top=0.93,
-                                       bottom=0.08, hspace=0.45)
-        self._wave_axes = self._wave_fig.subplots(3, 1)
+        self._wave_fig = Figure(figsize=(11, 1.7), dpi=90)
+        self._wave_fig.subplots_adjust(left=0.07, right=0.99, top=0.92,
+                                       bottom=0.08, hspace=0.5)
+        self._wave_axes = self._wave_fig.subplots(2, 1)
         for ax in self._wave_axes:
             ax.set_xlim(0, 1)
             ax.set_xticks([])
             ax.set_yticks([])
         self._wave_axes[0].set_ylabel("Original", fontsize=8, color="#a33")
         self._wave_axes[1].set_ylabel("Descarga", fontsize=8, color="#2a6")
-        self._wave_axes[2].set_ylabel("Juntas", fontsize=8)
         self._wave_canvas = FigureCanvasTkAgg(self._wave_fig, master=wave_box)
         self._wave_canvas.get_tk_widget().pack(fill=tk.X)
         self._wave_data = {}
@@ -10334,21 +10334,10 @@ class CompareDialog(tk.Toplevel):
             ax.set_xticks([]); ax.set_yticks([])
         axes[0].set_ylabel("Original", fontsize=8, color="#a33")
         axes[1].set_ylabel("Descarga", fontsize=8, color="#2a6")
-        axes[2].set_ylabel("Juntas", fontsize=8)
         for ax, side in ((axes[0], "orig"), (axes[1], "cand")):
             amp, bands = self._wave_data[side]
             x = _np.linspace(0, 1, len(amp))
             ax.vlines(x, -amp, amp, colors=bands, linewidth=1.0)
-        # superpuesta: contorno de cada una con su color
-        ao, _ = self._wave_data["orig"]
-        ac, _ = self._wave_data["cand"]
-        xo = _np.linspace(0, 1, len(ao))
-        xc = _np.linspace(0, 1, len(ac))
-        axes[2].fill_between(xo, 0, ao, color="#d0352b", alpha=0.45,
-                             linewidth=0)
-        axes[2].fill_between(xc, 0, -ac, color="#1f9e45", alpha=0.45,
-                             linewidth=0)
-        axes[2].axhline(0, color="#888", linewidth=0.5)
         try:
             self._wave_canvas.draw_idle()
         except Exception:
@@ -10403,7 +10392,7 @@ class CompareDialog(tk.Toplevel):
         info_lbl.grid(row=1, column=0, sticky="w", pady=(2, 6))
 
         # Placeholder para el gráfico
-        fig = Figure(figsize=(5.2, 3.8), dpi=90)
+        fig = Figure(figsize=(5.2, 2.9), dpi=90)
         ax = fig.add_subplot(111)
         ax.text(0.5, 0.5, "Analizando…", ha="center", va="center",
                 fontsize=12, color="#888", transform=ax.transAxes)
@@ -10592,7 +10581,7 @@ class SmartRenameDialog(tk.Toplevel):
         self.row = row
         self.path = Path(row["path"])
         self.title(f"Renombrar / tags — {self.path.name}")
-        self.geometry("640x560")
+        center_window(self, 640, 560)
         self.minsize(560, 480)
         self.transient(app)
         self.lift()
@@ -10715,7 +10704,7 @@ class SubstituteTargetDialog(tk.Toplevel):
         self.app = app
         self.downloaded = downloaded_path
         self.title(f"Sustituir con — {downloaded_path.name}")
-        self.geometry("820x520")
+        center_window(self, 820, 520)
         self.transient(app)
         self.grab_set()
 
@@ -10833,7 +10822,7 @@ class ManualSubstituteDialog(tk.Toplevel):
         self.orig_iid = orig_iid
         self.row = row
         self.title(f"Sustituir manualmente — {row['name']}")
-        self.geometry("820x520")
+        center_window(self, 820, 520)
         self.transient(app)
 
         # Original
@@ -11133,11 +11122,11 @@ OPTION_TABS = [
               "sustituye."},
      {"src": "app", "key": "sub_auto_confirm_var", "kind": "float",
       "min": 0.5, "max": 1.0, "step": 0.01,
-      "label": "No preguntar por encima de",
-      "hint": "Si el parecido llega a este %, Maceta sustituye sola sin "
-              "preguntar. Entre el umbral de «misma canción» y este, te "
-              "enseña el % y decides tú (0.95 = 95%). Ponlo a 1.00 para "
-              "que te pregunte SIEMPRE antes de sustituir."},
+      "label": "Sustituir solo por encima de",
+      "hint": "Si el parecido llega a este %, Maceta sustituye sola. Por "
+              "debajo (pero aún «misma canción») la manda a Revisar para que "
+              "la mires a mano, sin popups (0.95 = 95%). Ponlo a 1.00 para "
+              "que TODAS pasen por Revisar antes de sustituir."},
      {"src": "app", "key": "min_free_gb_var", "kind": "float",
       "min": 0.0, "max": 500.0, "step": 1.0,
       "label": "Parar de bajar con menos de (GB)",
@@ -11243,7 +11232,7 @@ class OptionsDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Opciones de Maceta")
-        self.geometry("980x640")
+        center_window(self, 980, 640)
         self.transient(app)
         cfg = load_config()
         self._cfg_vars = {}
@@ -11537,7 +11526,7 @@ class SearchQueueDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Cola de búsqueda")
-        self.geometry("560x460")
+        center_window(self, 560, 460)
         self.transient(app)
 
         ttk.Label(self, padding=(12, 10, 12, 2),
@@ -11607,7 +11596,7 @@ class SoulseekDiagDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Diagnóstico de Soulseek")
-        self.geometry("680x520")
+        center_window(self, 680, 520)
         self.transient(app)
 
         top = ttk.Frame(self, padding=(14, 12, 14, 4))
@@ -11818,7 +11807,7 @@ class BannedPeersDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Usuarios baneados")
-        self.geometry("520x460")
+        center_window(self, 520, 460)
         self.transient(app)
 
         ttk.Label(
@@ -11913,7 +11902,7 @@ class ColorEditorDialog(tk.Toplevel):
         super().__init__(master)
         self.master_app = master
         self.title("🎨 Colores")
-        self.geometry("380x330")
+        center_window(self, 380, 330)
         self.transient(master)
 
         ttk.Label(
@@ -11975,7 +11964,7 @@ class SpectrumWindow(tk.Toplevel):
     def __init__(self, master, row):
         super().__init__(master)
         self.title(f"Espectro – {row['name']}")
-        self.geometry("820x540")
+        center_window(self, 820, 540)
         fig = Figure(figsize=(8, 5), dpi=100)
         ax = fig.add_subplot(111)
         freqs = row["freqs"]
@@ -12206,7 +12195,7 @@ class QualityPickerDialog(tk.Toplevel):
                  min_bitrate: int = GOOD_MP3_MIN_BR, filters: dict = None):
         super().__init__(master)
         self.title(f"Elegir versión — {query}")
-        self.geometry("900x480")
+        center_window(self, 900, 480)
         self.transient(master)
         self.grab_set()
         self.result = None
