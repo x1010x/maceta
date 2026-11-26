@@ -3,6 +3,13 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.98 — 2026-11-26
+
+- **Arreglada la reanudación de la cola al reabrir.** Antes solo reanudaba
+  las canciones de la carpeta que tuvieras cargada; ahora retoma **todo lo
+  que dejaste en proceso** (por ruta del fichero), aunque estés en otra
+  carpeta o no cargues ninguna. Lo que estabas haciendo no se pierde.
+
 ## 0.4.97 — 2026-11-26
 
 - **Forma de onda estilo VirtualDJ en la comparación.** Al confirmar una

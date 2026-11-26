@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.97"
+VERSION = "0.4.98"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -4059,6 +4059,7 @@ class MacetaApp(tk.Tk):
         # Actividad → Descargas mientras están en curso y en el diálogo
         # "🔗 Sustituir con descarga…" para reemplazar un original.
         self._start_activity_poller()
+        self.after(2500, self._restore_queue)   # reanudar cola aunque no se escanee
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _set_window_icon(self):
@@ -9472,14 +9473,28 @@ class MacetaApp(tk.Tk):
         added = 0
         for item in data:
             p = item.get("path")
-            iid = self._iid_for_path(p) if p else None
-            if not iid or iid in self.active_by_iid:
+            if not p or not os.path.exists(p):
                 continue
+            iid = self._iid_for_path(p)
+            if iid:
+                if iid in self.active_by_iid:
+                    continue
+                row = self.rows_by_iid[iid]
+            else:
+                # No está en la carpeta cargada ahora, pero el fichero existe:
+                # lo reanudamos igual con una fila mínima (la sustitución
+                # trabaja sobre la ruta del disco).
+                self._requeue_counter = getattr(self,
+                                                 "_requeue_counter", 0) + 1
+                iid = f"requeue:{self._requeue_counter}"
+                try:
+                    row = scan_row(p)
+                except Exception:
+                    row = {"path": p, "name": os.path.basename(p)}
             self.active_by_iid[iid] = "buscando"
             self._set_slsk_status(iid, "⏳ en cola de búsqueda")
             self._search_queue.append(
-                (iid, self.rows_by_iid[iid], item.get("query"),
-                 bool(item.get("picker"))))
+                (iid, row, item.get("query"), bool(item.get("picker"))))
             added += 1
         if not added:
             return
