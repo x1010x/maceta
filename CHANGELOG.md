@@ -3,6 +3,13 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.93 — 2026-11-26
+
+- **Actividad Soulseek más espaciosa.** Quitados los títulos duplicados
+  («Búsquedas» salía dos veces) y los marcos con borde que gastaban sitio:
+  ahora cada panel (Búsquedas / Resultados / Descargas) tiene un único
+  título compacto y las tablas son más grandes.
+
 ## 0.4.92 — 2026-11-26
 
 - **Menos copias de la misma canción.** Cuando la escalada descarta una

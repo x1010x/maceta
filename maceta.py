@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.92"
+VERSION = "0.4.93"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -5796,12 +5796,12 @@ class MacetaApp(tk.Tk):
         main.add(top_paned, weight=1)
 
         # --- Búsquedas (izquierda) ---
-        s_frame = ttk.LabelFrame(top_paned, text="Búsquedas", padding=6)
+        s_frame = ttk.Frame(top_paned, padding=(4, 2))
         top_paned.add(s_frame, weight=1)
         s_head = ttk.Frame(s_frame)
         s_head.pack(fill=tk.X)
         ttk.Label(s_head, text="Búsquedas",
-                  foreground="#888").pack(side=tk.LEFT)
+                  font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT)
         self._font_controls(s_head, lambda: self.search_tree, "searches")
         s_cols = ("num", "query", "state", "responses", "files")
         s_wrap, self.search_tree = make_scrollable_tree(
@@ -5844,10 +5844,12 @@ class MacetaApp(tk.Tk):
                               lambda _e: self._on_search_selected())
 
         # --- Resultados (derecha) ---
-        r_frame = ttk.LabelFrame(top_paned, text="Resultados", padding=6)
+        r_frame = ttk.Frame(top_paned, padding=(4, 2))
         top_paned.add(r_frame, weight=2)
         r_head = ttk.Frame(r_frame)
         r_head.pack(fill=tk.X)
+        ttk.Label(r_head, text="Resultados",
+                  font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT)
         self._font_controls(r_head, lambda: self.results_tree, "results")
         # Orden: # · Nombre · Cola · Slot · MB · (resto)
         r_cols = ("num", "name", "queue", "slot", "size",
@@ -5900,10 +5902,12 @@ class MacetaApp(tk.Tk):
                                lambda _e: self._download_selected_results())
 
         # --- Descargas (abajo, ocupa el segundo pane vertical) ---
-        d_frame = ttk.LabelFrame(main, text="Descargas", padding=6)
+        d_frame = ttk.Frame(main, padding=(4, 2))
         main.add(d_frame, weight=1)
         d_head = ttk.Frame(d_frame)
         d_head.pack(fill=tk.X)
+        ttk.Label(d_head, text="Descargas",
+                  font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT)
         self._font_controls(d_head, lambda: self.dl_tree, "activity_dl")
         d_cols = ("num", "file", "user", "state", "queue",
                   "progress", "size")
