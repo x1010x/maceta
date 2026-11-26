@@ -3,6 +3,13 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.92 — 2026-11-26
+
+- **Menos copias de la misma canción.** Cuando la escalada descarta una
+  versión FAKE y prueba la siguiente, la descartada se manda a la **papelera**
+  en vez de quedarse. Así no acabas con 3 copias de la misma canción ni
+  llenando el disco. (La papelera es recuperable, no se borra de verdad.)
+
 ## 0.4.91 — 2026-11-25
 
 - **Para de bajar cuando queda poco disco.** Nuevo ajuste *Opciones →

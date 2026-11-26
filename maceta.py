@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.91"
+VERSION = "0.4.92"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -7535,6 +7535,12 @@ class MacetaApp(tk.Tk):
             local_path, min_bitrate=self._min_bitrate_for(row))
         if not q_ok:
             if self._escalate_fake(orig_iid, row, q_reason):
+                # La versión descartada (FAKE/mala) a la papelera: así no se
+                # acumulan copias de la misma canción ni se llena el disco.
+                try:
+                    to_trash(local_path)
+                except Exception as e:
+                    log.warning("no se pudo tirar la descartada: %s", e)
                 return
             self.after(0, self._set_slsk_status, orig_iid,
                        f"✗ calidad baja ({q_reason})")
