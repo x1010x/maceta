@@ -48,7 +48,7 @@ from matplotlib.backends.backend_tkagg import (
 )
 
 
-VERSION = "0.4.95"
+VERSION = "0.4.96"
 DEFAULT_UPDATE_REPO = "x1010x/maceta"
 DEFAULT_UPDATE_BRANCH = "main"
 
@@ -805,9 +805,13 @@ def run_clean_archive(plan: dict) -> int:
     return n
 
 
-def substitute_file(original_path: str, downloaded_path: str) -> Path:
-    """Mueve el original a archivo/ y coloca el descargado en su sitio
-    usando el mismo stem del original + la extensión del descargado.
+def substitute_file(original_path: str, downloaded_path: str,
+                    keep_name: bool = False) -> Path:
+    """Mueve el original a archivo/ y coloca el descargado en su sitio.
+
+    - keep_name=False (por defecto): usa el mismo nombre del original con la
+      extensión de la descarga (renombra la descarga al nombre de siempre).
+    - keep_name=True: deja el nombre propio de la descarga.
 
     Devuelve la ruta final del sustituto.
     """
@@ -827,8 +831,9 @@ def substitute_file(original_path: str, downloaded_path: str) -> Path:
         )
     shutil.move(str(orig), str(arch))
 
-    target = orig.with_suffix(dl.suffix)
-    if target.exists():
+    target = (orig.parent / dl.name) if keep_name else orig.with_suffix(
+        dl.suffix)
+    if target.exists() and str(target) != str(dl):
         target = target.with_name(target.stem + ".new" + target.suffix)
     shutil.move(str(dl), str(target))
     return target
@@ -3328,81 +3333,6 @@ class ImageAnnotator(tk.Toplevel):
         self._finish()
 
 
-class SubstituteConfirmDialog(tk.Toplevel):
-    """Antes de sustituir a ciegas: enseña cuánto se parecen el original y
-    la descarga (un %) para que el usuario decida. Permite reproducir ambas
-    para comparar a oído."""
-
-    def __init__(self, app, row, downloaded_path, sim, reason, quality):
-        super().__init__(app)
-        self.app = app
-        self.result = "skip"
-        self.title("¿Es la misma canción?")
-        self.geometry("560x340")
-        self.transient(app)
-        self.lift()
-        self.focus_force()
-        try:
-            self.grab_set()
-        except tk.TclError:
-            pass
-
-        pct = max(0, min(100, int(round(sim * 100))))
-        color = ("#0a7f2e" if pct >= 95 else
-                 "#b07a00" if pct >= 85 else "#b0261f")
-        top = ttk.Frame(self, padding=(16, 14, 16, 4))
-        top.pack(fill=tk.X)
-        tk.Label(top, text=f"{pct}%", font=("TkDefaultFont", 34, "bold"),
-                 fg=color).pack(side=tk.LEFT)
-        ttk.Label(top, justify="left", wraplength=400,
-                  text=f"de parecido entre el original y la descarga "
-                       f"({reason}).\nCalidad de la descarga: {quality}.\n"
-                       "Comprueba que es la misma canción antes de "
-                       "reemplazar.").pack(side=tk.LEFT, padx=12)
-
-        body = ttk.Frame(self, padding=(16, 6))
-        body.pack(fill=tk.BOTH, expand=True)
-        orig = Path(row.get("path") or "")
-        dl = Path(downloaded_path)
-        ttk.Label(body, text="Original (se moverá a archivo/):",
-                  foreground="#888").pack(anchor="w")
-        o = ttk.Frame(body); o.pack(fill=tk.X, pady=(0, 8))
-        ttk.Button(o, text="▶", width=3,
-                   command=lambda: self.app.play_path(str(orig), orig.name)
-                   ).pack(side=tk.LEFT)
-        ttk.Label(o, text=orig.name, wraplength=440).pack(side=tk.LEFT, padx=8)
-        ttk.Label(body, text="Descarga (la nueva):",
-                  foreground="#888").pack(anchor="w")
-        d = ttk.Frame(body); d.pack(fill=tk.X)
-        ttk.Button(d, text="▶", width=3,
-                   command=lambda: self.app.play_path(str(dl), dl.name)
-                   ).pack(side=tk.LEFT)
-        ttk.Label(d, text=dl.name, wraplength=440).pack(side=tk.LEFT, padx=8)
-
-        btns = ttk.Frame(self, padding=(16, 8, 16, 14))
-        btns.pack(fill=tk.X)
-        ttk.Button(btns, text="✓ Sí, sustituir",
-                   command=self._yes).pack(side=tk.LEFT)
-        ttk.Button(btns, text="✗ No (dejar en Revisar)",
-                   command=self._no).pack(side=tk.LEFT, padx=8)
-
-    def _yes(self):
-        self.result = "sub"
-        try:
-            self.app.on_stop_playback()
-        except Exception:
-            pass
-        self.destroy()
-
-    def _no(self):
-        self.result = "skip"
-        try:
-            self.app.on_stop_playback()
-        except Exception:
-            pass
-        self.destroy()
-
-
 class ReportDialog(tk.Toplevel):
     """Formulario para que el usuario cuente un problema. Lo guarda en
     reportes.txt (texto plano, junto a maceta.py) con versión, parte de la
@@ -5824,8 +5754,8 @@ class MacetaApp(tk.Tk):
             self.search_tree.heading(c, text=t)
             self.search_tree.column(c, width=w, minwidth=max(40, w // 2),
                                     anchor=tk.W, stretch=False)
-        s_btns = ttk.Frame(s_frame)
-        s_btns.pack(fill=tk.X, pady=(4, 0))
+        s_btns = ttk.Frame(s_head)
+        s_btns.pack(side=tk.LEFT, padx=(14, 0))
         icon_button(s_btns, "☑", "Seleccionar todas (Cmd+A)",
                     lambda: self._select_all_in(self.search_tree),
                     side=tk.LEFT, padx=(0, 8))
@@ -5890,8 +5820,8 @@ class MacetaApp(tk.Tk):
             self.results_tree.heading(c, text=t, command=_r_sorter(c))
             self.results_tree.column(c, width=w, minwidth=max(40, w // 2),
                                     anchor=tk.W, stretch=False)
-        r_btns = ttk.Frame(r_frame)
-        r_btns.pack(fill=tk.X, pady=(4, 0))
+        r_btns = ttk.Frame(r_head)
+        r_btns.pack(side=tk.LEFT, padx=(14, 0))
         icon_button(r_btns, "☑", "Seleccionar todos (Cmd+A)",
                     lambda: self._select_all_in(self.results_tree),
                     side=tk.LEFT, padx=(0, 8))
@@ -5932,8 +5862,8 @@ class MacetaApp(tk.Tk):
                                 anchor=tk.W, stretch=False)
         self.dl_tree.bind("<<TreeviewSelect>>",
                           lambda _e: self._sync_search_from_dl())
-        d_btns = ttk.Frame(d_frame)
-        d_btns.pack(fill=tk.X, pady=(4, 0))
+        d_btns = ttk.Frame(d_head)
+        d_btns.pack(side=tk.LEFT, padx=(14, 0))
         icon_button(d_btns, "☑", "Seleccionar todas (Cmd+A)",
                     lambda: self._select_all_in(self.dl_tree),
                     side=tk.LEFT, padx=(0, 8))
@@ -7559,17 +7489,22 @@ class MacetaApp(tk.Tk):
             auto = float(self.sub_auto_confirm_var.get())
         except Exception:
             auto = 0.95
+        keep_new = False
         if sim < auto:
-            box = {}
+            box = {"r": "skip"}
             def _ask():
-                dlg = SubstituteConfirmDialog(
-                    self, row, local_path, sim, reason, q_reason)
+                dlg = CompareDialog(
+                    self, row["path"], local_path,
+                    on_confirm=lambda keep: box.update(r="sub", keep=keep),
+                    orig_label="Original (Biblioteca)",
+                    cand_label="Candidata (descarga)")
                 self.wait_window(dlg)
-                box["r"] = dlg.result
+                box["done"] = True
             self.after(0, _ask)
-            while "r" not in box:
+            while "done" not in box:
                 time.sleep(0.1)
-            if box["r"] != "sub":
+            keep_new = bool(box.get("keep", False))
+            if box.get("r") != "sub":
                 self._escalation.pop(orig_iid, None)
                 self.after(0, self._set_slsk_status, orig_iid,
                            f"⚠ revisar — {int(round(sim*100))}% "
@@ -7577,7 +7512,8 @@ class MacetaApp(tk.Tk):
                 self.after(0, self._release_active, orig_iid)
                 return
         try:
-            new_path = substitute_file(row["path"], local_path)
+            new_path = substitute_file(row["path"], local_path,
+                                       keep_name=keep_new)
         except Exception as e:
             self.after(0, self._set_slsk_status, orig_iid, f"error sust.: {e}")
             self.after(0, self._release_active, orig_iid)
@@ -8924,11 +8860,12 @@ class MacetaApp(tk.Tk):
         ManualSubstituteDialog(self, iid, row)
 
     def do_manual_substitute(self, orig_iid, row, downloaded_path,
-                             reason="manual"):
+                             reason="manual", keep_name=False):
         """Sustituye el original por la descarga ya elegida. `reason` es de
         dónde salió la decisión: 'manual', 'link' o la similitud de audio."""
         try:
-            new_path = substitute_file(row["path"], downloaded_path)
+            new_path = substitute_file(row["path"], downloaded_path,
+                                       keep_name=keep_name)
         except Exception as e:
             messagebox.showerror("Maceta", f"No se pudo sustituir: {e}")
             return
@@ -10304,6 +10241,11 @@ class CompareDialog(tk.Toplevel):
                    command=self._cancel).pack(side=tk.RIGHT)
         ttk.Button(btns, text="✓ Sustituir",
                    command=self._confirm).pack(side=tk.RIGHT, padx=6)
+        self.keep_name_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            btns, variable=self.keep_name_var,
+            text="Dejar el nombre de la descarga (no renombrar)").pack(
+            side=tk.LEFT)
 
         # Lanzar cálculos en paralelo
         for side, path in (("orig", self.orig_path),
@@ -10379,7 +10321,7 @@ class CompareDialog(tk.Toplevel):
         pl = AudioPlayer(self.app._find_ffmpeg())
         play_var = tk.StringVar(value="▶")
         pos_var = tk.DoubleVar(value=0.0)
-        time_var = tk.StringVar(value="0:00 / 0:00")
+        time_var = tk.StringVar(value=f"0:00 / {self._fmt_t(dur)}")
 
         def _toggle():
             if pl.is_playing:
@@ -10526,8 +10468,9 @@ class CompareDialog(tk.Toplevel):
             self.app.on_stop_playback()
         except Exception:
             pass
+        keep = bool(self.keep_name_var.get())
         try:
-            self.on_confirm()
+            self.on_confirm(keep)
         finally:
             self.destroy()
 
@@ -10768,9 +10711,9 @@ class SubstituteTargetDialog(tk.Toplevel):
             return
         orig_iid, row = self._iid_to_row[sel[0]]
 
-        def do_sub():
+        def do_sub(keep=False):
             self.app.do_manual_substitute(
-                orig_iid, row, str(self.downloaded))
+                orig_iid, row, str(self.downloaded), keep_name=keep)
         CompareDialog(
             self.app,
             orig_path=row["path"],
@@ -10915,8 +10858,9 @@ class ManualSubstituteDialog(tk.Toplevel):
         row = self.row
         picked = str(p)
 
-        def do_sub():
-            self.app.do_manual_substitute(orig_iid, row, picked)
+        def do_sub(keep=False):
+            self.app.do_manual_substitute(orig_iid, row, picked,
+                                          keep_name=keep)
 
         CompareDialog(
             self.app,

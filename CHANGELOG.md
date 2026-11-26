@@ -3,6 +3,20 @@
 Novedades por versión. Maceta te avisará automáticamente después de
 actualizar con un popup mostrando lo que cambió desde tu versión anterior.
 
+## 0.4.96 — 2026-11-26
+
+- **Botones arriba en Actividad.** Los botones de cada panel (Búsquedas,
+  Resultados, Descargas) se mueven a la cabecera, a la derecha del título,
+  dejando más alto para las tablas.
+- **Confirmar sustitución con los espectros.** El aviso «¿Es la misma
+  canción?» ahora enseña los **dos espectros** (original vs descarga) + el %
+  de parecido, para ver de un vistazo si son la misma, estilo VirtualDJ.
+- **Opción «dejar el nombre de la descarga».** En el diálogo de comparar,
+  una casilla para sustituir conservando el nombre del fichero nuevo en vez
+  de renombrarlo al del original.
+- En el comparador de espectros, la **duración total** se ve antes de darle
+  al play (ya no pone 00:00).
+
 ## 0.4.95 — 2026-11-26
 
 - **La cola de búsqueda ya no se pierde al cerrar.** Lo que tengas pendiente
